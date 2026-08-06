@@ -7,6 +7,7 @@ import { Moderation } from '@/utils/moderation';
 import { registerMessageHandler } from '@/handlers/registry';
 import { isModuleEnabled } from '@/utils/module-toggle';
 import { isAdminByData, isSuperUser } from "@/utils/permission";
+import { reply } from "@/utils/client";
 
 function getImageSegments(message: MessageSegment[]): ImageSegment[] {
     return message.filter((segment): segment is ImageSegment => segment.type === 'image');
@@ -49,6 +50,7 @@ async function handleImages(client: NapLink, data: OneBotV11.GroupMessageEvent) 
         );
         try {
             await client.deleteMessage(data.message_id);
+            await reply(client, data, `撤回疑似违规图片，风险等级: ${result.riskLevel}，标签: ${result.labels.length ? result.labels.join(', ') : ''}。`);
         } catch {}
         return;
     }
