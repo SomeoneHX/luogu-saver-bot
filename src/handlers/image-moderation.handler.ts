@@ -47,6 +47,9 @@ async function handleImages(client: NapLink, data: OneBotV11.GroupMessageEvent) 
         logger.warn(
             `Blocked image message ${data.message_id} from ${data.user_id}: risk=${result.riskLevel}, labels=${result.labels.join(', ')}`
         );
+        try {
+            await client.deleteMessage(data.message_id);
+        } catch {}
         return;
     }
 }
