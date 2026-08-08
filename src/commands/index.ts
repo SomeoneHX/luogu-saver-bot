@@ -17,7 +17,7 @@ import { ShutUpCommand } from '@/commands/shut-up';
 import { BanCommandCommand } from '@/commands/ban-command';
 import { RechargeCommand } from '@/commands/recharge';
 import { ToggleCommand } from '@/commands/toggle';
-import { NewApiCommand } from '@/commands/newapi';
+import { Sub2ApiCommand } from '@/commands/sub2api';
 import { QaCommand } from '@/commands/qa';
 import { RecallCommand } from '@/commands/recall';
 import { ManageCommand } from '@/commands/manage';
@@ -72,7 +72,7 @@ export const commands: Command<any>[] = [
     new ShutUpCommand(),
     new BanCommandCommand(),
     new RechargeCommand(),
-    new NewApiCommand(),
+    new Sub2ApiCommand(),
     new QaCommand(),
     new RecallCommand(),
     new ManageCommand(),

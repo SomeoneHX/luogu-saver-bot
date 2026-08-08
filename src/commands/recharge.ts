@@ -7,12 +7,10 @@ import { isSuperUser } from '@/utils/permission';
 import { db } from '@/db';
 import { rechargeDailyUsages } from '@/db/schema';
 import { config } from '@/config';
-import { createRedemptionCodeByAdmin } from '@/utils/newapi';
+import { createSub2ApiBalanceRedeemCode } from '@/utils/sub2api-client';
 import { isValidUser } from '@/utils/validator';
 import { normalizeConditionalUserTargets } from '@/utils/command-args';
 import { getErrorMessage } from '@/utils/error';
-
-import { getRandomHexString } from '@/utils/random';
 
 const MONEY_REGEX = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/;
 
@@ -28,13 +26,13 @@ function getCurrentDayKey(): string {
     return new Intl.DateTimeFormat('en-CA', { timeZone: config.saver.dailyLimitTimezone }).format(new Date());
 }
 
-export class RechargeCommand implements Command<OneBotV11.PrivateMessageEvent> {
+export class RechargeCommand implements Command<OneBotV11.GroupMessageEvent> {
     name = 'recharge';
     aliases = ['充值'];
-    description = '私聊生成充值兑换码（普通用户每日最多 $5）。可指定目标用户，私信发送给对方。';
+    description = '在指定群聊生成充值兑换码（普通用户每日最多 $5），兑换码通过私信发送。';
     cooldown = 10000;
     usage = '/recharge <金额> [@用户/QQ号]';
-    scope: CommandScope = 'both';
+    scope: CommandScope = 'group';
     normalizeArgs = normalizeConditionalUserTargets(args => args.length >= 2, 1);
 
     validateArgs(args: string[]): boolean {
@@ -43,13 +41,13 @@ export class RechargeCommand implements Command<OneBotV11.PrivateMessageEvent> {
         return false;
     }
 
-    async execute(args: string[], client: NapLink, data: OneBotV11.PrivateMessageEvent): Promise<void> {
-        const targetUserId = args.length >= 2 ? Number(args[1]) : null;
-
-        if ((!targetUserId || targetUserId === data.user_id) && (data as any).message_type === 'group') {
-            await reply(client, data, '请私聊机器人发送该命令，或指定目标用户：/recharge <金额> <QQ号>');
+    async execute(args: string[], client: NapLink, data: OneBotV11.GroupMessageEvent): Promise<void> {
+        if (!config.saver.rechargeAllowedGroupIds.includes(data.group_id)) {
+            await reply(client, data, '该命令仅允许在配置的充值群中使用。');
             return;
         }
+
+        const targetUserId = args.length >= 2 ? Number(args[1]) : data.user_id;
 
         const amountUsd = Number(args[0]);
         if (!Number.isFinite(amountUsd) || amountUsd < 1) {
@@ -83,10 +81,11 @@ export class RechargeCommand implements Command<OneBotV11.PrivateMessageEvent> {
 
         let redemptionCode: string;
         try {
-            redemptionCode = await createRedemptionCodeByAdmin(
+            const result = await createSub2ApiBalanceRedeemCode(
                 amountUsd,
-                `${data.user_id}-${getRandomHexString(10)}-${fromCents(amountCents)}`
+                `lgs-bot-recharge-${data.group_id}-${data.message_id}-${data.user_id}-${targetUserId}-${amountCents}`
             );
+            redemptionCode = result.code;
         } catch (error) {
             await reply(client, data, `充值失败：${getErrorMessage(error)}`);
             return;
@@ -115,8 +114,8 @@ export class RechargeCommand implements Command<OneBotV11.PrivateMessageEvent> {
                 '你的充值兑换码已生成。',
                 `金额: $${fromCents(amountCents)}。`,
                 `兑换码: ${redemptionCode}。`,
-                '请尽快前往 NewAPI 使用。',
-                '地址: https://ai.luogu.me/console/topup',
+                '请尽快前往 Sub2API 使用。',
+                `地址: ${config.saver.sub2ApiRedeemUrl}`,
                 '--------------------',
                 '欢迎使用群主雨云推广购买服务器！',
                 '推广链接：https://www.rainyun.com/federico_?s=bot',
@@ -124,17 +123,15 @@ export class RechargeCommand implements Command<OneBotV11.PrivateMessageEvent> {
                 '购买服务器即提供永久免费技术支持！'
             ].join('\n');
 
-            if (targetUserId) {
-                try {
-                    await sendPrivateMessage(client, targetUserId, codeMessage);
-                } catch {
-                    await reply(client, data, '兑换码已生成但未送达，请尝试让对方添加机器人好友后重试。');
-                    return;
-                }
-                await reply(client, data, `已将 $${fromCents(amountCents)} 的充值兑换码私信发送给 ${targetUserId}。`);
-            } else {
-                await reply(client, data, codeMessage);
+            try {
+                await sendPrivateMessage(client, targetUserId, codeMessage);
+            } catch {
+                await reply(client, data, '兑换码已生成但未送达，请尝试让接收用户添加机器人好友后重试。');
+                return;
             }
+
+            const targetLabel = targetUserId === data.user_id ? '你' : String(targetUserId);
+            await reply(client, data, `已将 $${fromCents(amountCents)} 的充值兑换码私信发送给 ${targetLabel}。`);
         } catch (error) {
             await reply(client, data, `充值失败：${getErrorMessage(error)}`);
         }
