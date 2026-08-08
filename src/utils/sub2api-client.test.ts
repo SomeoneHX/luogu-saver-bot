@@ -84,4 +84,6 @@ test('saver config defaults recharge to the designated QQ group', () => {
     const saver = SaverSchema.parse({});
 
     assert.deepEqual(saver.rechargeAllowedGroupIds, [1017248143]);
+    assert.equal(saver.sub2ApiBaseUrl, 'https://sub2api.luogu.me');
+    assert.equal(saver.sub2ApiRedeemUrl, 'https://sub2api.luogu.me/redeem');
 });
