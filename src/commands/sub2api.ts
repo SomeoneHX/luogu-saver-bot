@@ -24,7 +24,6 @@ import {
 } from '@/utils/sub2api-format';
 import { getSub2ApiBindingByUserId, upsertSub2ApiBinding } from '@/utils/sub2api-bindings';
 import { isSuperUser } from '@/utils/permission';
-import { isValidPositiveId, isValidUser, isValidVerificationCode } from '@/utils/validator';
 import { maskEmail } from '@/utils/email';
 import {
     composeArgNormalizers,
@@ -34,6 +33,7 @@ import {
 import { EmailVerificationStore, sendVerificationEmail } from '@/utils/email-verification';
 import { getErrorMessage } from '@/utils/error';
 import { isLikelyQqId } from '@/utils/user-target';
+import { validateSub2ApiArgs } from '@/commands/sub2api-args';
 
 type Sub2ApiVerification = {
     sub2ApiUserId: number;
@@ -56,6 +56,7 @@ export class Sub2ApiCommand implements Command<AllMessageEvent> {
     aliases = ['额度'];
     description = '绑定 Sub2API 用户并查询余额、分组和余额包。';
     usage = {
+        me: '/sub2api me',
         bind: '/sub2api bind <Sub2API 用户 ID> [QQ 号/@用户]\n/sub2api bind query [QQ 号/@用户]',
         verify: '/sub2api verify <6 位验证码>',
         user: {
@@ -87,40 +88,14 @@ export class Sub2ApiCommand implements Command<AllMessageEvent> {
 
     private verificationStore = new EmailVerificationStore<Sub2ApiVerification>();
 
-    validateArgs(args: string[]): boolean {
-        if (args.length === 0) return true;
-        if (args.length === 2 && args[0] === 'bind' && args[1] === 'query') return true;
-        if (args.length === 2 && args[0] === 'bind') return isValidPositiveId(args[1]);
-        if (args.length === 3 && args[0] === 'bind' && args[1] === 'query') return isValidUser(args[2]);
-        if (args.length === 3 && args[0] === 'bind') return isValidPositiveId(args[1]) && isValidUser(args[2]);
-        if (args.length === 2 && args[0] === 'verify') return isValidVerificationCode(args[1]);
-        if (args.length === 2 && args[0] === 'user' && args[1] === 'query') return true;
-        if (args.length === 3 && args[0] === 'user' && args[1] === 'query') return isValidUser(args[2]);
-        if (args.length >= 3 && args[0] === 'user' && args[1] === 'search') {
-            return args.slice(2).join(' ').trim().length > 0;
-        }
-        if (args.length === 2 && args[0] === 'group' && args[1] === 'list') return true;
-        if (args.length === 3 && args[0] === 'group' && args[1] === 'models') return isValidPositiveId(args[2]);
-        if (args.length === 2 && args[0] === 'package' && ['list', 'query'].includes(args[1])) return true;
-        if (args.length === 3 && args[0] === 'package' && args[1] === 'query') return isValidUser(args[2]);
-        if (args.length === 4 && args[0] === 'package' && args[1] === 'grant') {
-            return isValidPositiveId(args[2]) && isValidUser(args[3]);
-        }
-        if (args.length === 3 && args[0] === 'package' && ['void', 'restore'].includes(args[1])) {
-            return isValidPositiveId(args[2]);
-        }
-        if (args.length === 4 && args[0] === 'code' && args[1] === 'subscription') {
-            return isValidPositiveId(args[2]) && isValidPositiveId(args[3]);
-        }
-        return false;
-    }
+    validateArgs = validateSub2ApiArgs;
 
     async execute(
         args: string[],
         client: NapLink,
         data: OneBotV11.GroupMessageEvent | OneBotV11.PrivateMessageEvent
     ): Promise<void> {
-        if (args.length === 0) {
+        if (args[0] === 'me') {
             await this.handleUser(['query'], client, data);
             return;
         }

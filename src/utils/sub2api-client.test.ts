@@ -3,6 +3,7 @@ import test from 'node:test';
 import { parseSub2ApiResponse, sub2ApiBalancePackagePlanSchema, sub2ApiUserSchema } from '@/utils/sub2api-contracts';
 import { formatSub2ApiBalancePackagePlans, formatSub2ApiUserInfo } from '@/utils/sub2api-format';
 import { SaverSchema } from '@/config/schemas/saver';
+import { validateSub2ApiArgs } from '@/commands/sub2api-args';
 
 test('parseSub2ApiResponse parses a successful user response with defaults', () => {
     const user = parseSub2ApiResponse(
@@ -95,4 +96,10 @@ test('saver config provides a configurable Sub2API User-Agent', () => {
         'SaverBot-Firewall/2.0'
     );
     assert.throws(() => SaverSchema.parse({ sub2ApiUserAgent: 'invalid\r\nheader' }));
+});
+
+test('Sub2API requires an explicit me argument for the current user query', () => {
+    assert.equal(validateSub2ApiArgs([]), false);
+    assert.equal(validateSub2ApiArgs(['me']), true);
+    assert.equal(validateSub2ApiArgs(['me', '123']), false);
 });
