@@ -87,3 +87,12 @@ test('saver config defaults recharge to the designated QQ group', () => {
     assert.equal(saver.sub2ApiBaseUrl, 'https://sub2api.luogu.me');
     assert.equal(saver.sub2ApiRedeemUrl, 'https://sub2api.luogu.me/redeem');
 });
+
+test('saver config provides a configurable Sub2API User-Agent', () => {
+    assert.equal(SaverSchema.parse({}).sub2ApiUserAgent, 'luogu-saver-bot/1.0.0');
+    assert.equal(
+        SaverSchema.parse({ sub2ApiUserAgent: '  SaverBot-Firewall/2.0  ' }).sub2ApiUserAgent,
+        'SaverBot-Firewall/2.0'
+    );
+    assert.throws(() => SaverSchema.parse({ sub2ApiUserAgent: 'invalid\r\nheader' }));
+});

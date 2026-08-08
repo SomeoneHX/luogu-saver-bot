@@ -4,6 +4,12 @@ export const SaverSchema = z.object({
     token: z.string().default(''),
     sub2ApiBaseUrl: z.string().url().default('https://sub2api.luogu.me'),
     sub2ApiAdminApiKey: z.string().default(''),
+    sub2ApiUserAgent: z
+        .string()
+        .trim()
+        .min(1)
+        .regex(/^[\x20-\x7e]+$/)
+        .default('luogu-saver-bot/1.0.0'),
     sub2ApiRedeemUrl: z.string().url().default('https://sub2api.luogu.me/redeem'),
     sub2ApiRequestTimeoutMs: z.number().int().positive().default(10000),
     rechargeAllowedGroupIds: z.array(z.number().int().positive()).default([1017248143]),

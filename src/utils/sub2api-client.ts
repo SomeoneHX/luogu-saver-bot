@@ -45,6 +45,7 @@ async function adminRequest<T>(
 ): Promise<T> {
     const headers: Record<string, string> = {
         Accept: 'application/json',
+        'User-Agent': config.saver.sub2ApiUserAgent,
         'x-api-key': resolveAdminApiKey()
     };
     if (options.idempotencyKey) {
