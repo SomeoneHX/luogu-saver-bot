@@ -5,6 +5,8 @@ import { and, eq, gt } from 'drizzle-orm';
 import { logger } from '@/utils/logger';
 import { NapLink } from '@naplink/naplink';
 import { sendGroupMessage } from '@/utils/client';
+import { config } from '@/config';
+import { isGroupEnabled } from '@/utils/group-policy';
 
 let isJobRunning = false;
 
@@ -14,9 +16,11 @@ export function scheduleGachaHintJobs(client: NapLink): void {
         isJobRunning = true;
         try {
             const now = Date.now();
-            const runningPools = await db.query.gachaPools.findMany({
-                where: and(gt(gachaPools.endAt, now), eq(gachaPools.totalized, false))
-            });
+            const runningPools = (
+                await db.query.gachaPools.findMany({
+                    where: and(gt(gachaPools.endAt, now), eq(gachaPools.totalized, false))
+                })
+            ).filter(pool => isGroupEnabled(pool.groupId, config.group.enabledGroupIds));
             if (!runningPools || runningPools.length === 0) {
                 logger.info('No active gacha pools found for hint job.');
                 return;
@@ -31,6 +35,7 @@ export function scheduleGachaHintJobs(client: NapLink): void {
             }
 
             for (const [groupId, pools] of groupMap.entries()) {
+                if (!isGroupEnabled(groupId, config.group.enabledGroupIds)) continue;
                 const hintMessage =
                     '本群正在进行的抽奖：\n' +
                     pools

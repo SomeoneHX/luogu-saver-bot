@@ -21,7 +21,8 @@ import { setupImageModerationHandler } from '@/handlers/image-moderation.handler
 import { Moderation } from '@/utils/moderation';
 import { startWebhookServer } from '@/server/webhook';
 import { logger } from '@/utils/logger';
-import { setupGroupAddRequestHandler } from "@/handlers/group-add-request.handler";
+import { setupGroupAddRequestHandler } from '@/handlers/group-add-request.handler';
+import { startConfigReloadWatcher } from '@/config';
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
@@ -77,6 +78,7 @@ async function connectWithBackoff(): Promise<void> {
     }
 }
 
+startConfigReloadWatcher();
 void connectWithBackoff();
 
 client.on('disconnect', () => {

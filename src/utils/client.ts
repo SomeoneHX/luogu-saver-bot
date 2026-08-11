@@ -5,7 +5,10 @@ import { MessageBuilder } from '@/utils/message-builder';
 import { AllMessageEvent } from '@/types';
 import { config } from '@/config';
 import { logger } from '@/utils/logger';
-import { isNeedShrink } from "@/utils/anti-spam";
+import { isNeedShrink } from '@/utils/anti-spam';
+import { isGroupEnabled } from '@/utils/group-policy';
+
+export type SendMessageResult = OneBotV11.SendMessageResponse | null;
 
 export function isPrivate(data: AllMessageEvent): data is OneBotV11.PrivateMessageEvent {
     return data.message_type === 'private';
@@ -50,8 +53,7 @@ export function calculateTextLines(data: MessageSegment[]) {
 function packMessage(message: MessageSegment[] | string, autoEscape: boolean = false): MessageSegment[] {
     if (typeof message === 'string') {
         return autoEscape ? new MessageBuilder().text(message).build() : new MessageBuilder().cqCode(message).build();
-    }
-    else {
+    } else {
         return message;
     }
 }
@@ -71,7 +73,11 @@ export async function sendMessage(
     message: MessageSegment[] | string,
     autoEscape: boolean = false,
     noShrink: boolean = false
-): Promise<OneBotV11.SendMessageResponse> {
+): Promise<SendMessageResult> {
+    if (isGroup(data) && !isGroupEnabled(data.group_id, config.group.enabledGroupIds)) {
+        logger.debug(`Skipped outgoing message to disabled group ${data.group_id}.`);
+        return null;
+    }
     const needShrink = isNeedShrink(message);
     if (!needShrink || isPrivate(data) || noShrink) {
         console.log(packMessage(message, autoEscape), message, autoEscape);
@@ -84,9 +90,9 @@ export async function sendMessage(
     } else {
         const loginInfo = (await client.getLoginInfo()) as OneBotV11.LoginInfo;
         return await client.sendGroupForwardMessage(data.group_id, [
-            new MessageBuilder().segment(
-                message instanceof Array ? message : packMessage(message, autoEscape)
-            ).buildNode(loginInfo)
+            new MessageBuilder()
+                .segment(message instanceof Array ? message : packMessage(message, autoEscape))
+                .buildNode(loginInfo)
         ]);
     }
 }
@@ -147,7 +153,7 @@ export async function reply(
     data: AllMessageEvent,
     msg: string | MessageSegment[],
     autoEscape: boolean = false
-): Promise<OneBotV11.SendMessageResponse> {
+): Promise<SendMessageResult> {
     const builder = new MessageBuilder().reply(data.message_id).atIf(isGroup(data), data.user_id);
     if (typeof msg === 'string') {
         if (autoEscape) {

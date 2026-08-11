@@ -1,7 +1,7 @@
 import { NapLink } from '@naplink/naplink';
 import { SpamDetector } from '@/helpers/anti-spam';
 import { OneBotV11 } from '@onebots/protocol-onebot-v11/lib';
-import { config } from '@/config';
+import { config, onConfigReload } from '@/config';
 import { isAdminByData, isSuperUser } from '@/utils/permission';
 import { logger } from '@/utils/logger';
 import { VANILLA_QQ } from '@/constants/bot-qq';
@@ -9,9 +9,28 @@ import { isNeedShrink } from '@/utils/anti-spam';
 import { MessageBuilder } from '@/utils/message-builder';
 import { isModuleEnabled } from '@/utils/module-toggle';
 import { registerMessageHandler } from '@/handlers/registry';
+import { isGroupEnabled } from '@/utils/group-policy';
 
 export function setupAntiSpamHandler() {
     const detectors = new Map<number, SpamDetector>();
+
+    onConfigReload(({ changedPaths }) => {
+        if (changedPaths.some(configPath => configPath.startsWith('antiSpam.'))) {
+            for (const detector of detectors.values()) {
+                detector.dispose();
+            }
+            detectors.clear();
+            logger.info('Anti-spam detectors reset after configuration reload.');
+            return;
+        }
+        if (!changedPaths.includes('group.enabledGroupIds')) return;
+
+        for (const [groupId, detector] of detectors) {
+            if (isGroupEnabled(groupId, config.group.enabledGroupIds)) continue;
+            detector.dispose();
+            detectors.delete(groupId);
+        }
+    });
 
     registerMessageHandler({
         name: 'anti-spam',
@@ -25,7 +44,7 @@ export function setupAntiSpamHandler() {
             if (data.user_id === VANILLA_QQ) {
                 return;
             }
-            if (isNeedShrink(data.message)) {
+            if (config.antiSpam.shrinkMemberMessage && isNeedShrink(data.message)) {
                 const loginInfo: OneBotV11.LoginInfo = {
                     user_id: data.user_id,
                     nickname:
@@ -49,7 +68,8 @@ export function setupAntiSpamHandler() {
                 try {
                     await client.deleteMessage(data.message_id);
                     const time = Math.min(
-                        config.antiSpam.banDurationBase * Math.pow(2, Math.min(25, (result.level ?? 1) - 1)),
+                        config.antiSpam.banDurationBase *
+                            Math.pow(config.antiSpam.banMultiplier, Math.min(25, (result.level ?? 1) - 1)),
                         60 * 60 * 24 * 30
                     );
                     spamDetector.recordBan(data.user_id, time);

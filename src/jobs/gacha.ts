@@ -5,6 +5,8 @@ import { eq, and, lt } from 'drizzle-orm';
 import { reportGachaResult, totalizeGachaPool } from '@/helpers/gacha';
 import { logger } from '@/utils/logger';
 import { NapLink } from '@naplink/naplink';
+import { config } from '@/config';
+import { isGroupEnabled } from '@/utils/group-policy';
 
 let isJobRunning = false;
 
@@ -15,9 +17,11 @@ export function scheduleGachaJobs(client: NapLink): void {
 
         try {
             const now = Date.now();
-            const expiredPools = await db.query.gachaPools.findMany({
-                where: and(lt(gachaPools.endAt, now), eq(gachaPools.totalized, false))
-            });
+            const expiredPools = (
+                await db.query.gachaPools.findMany({
+                    where: and(lt(gachaPools.endAt, now), eq(gachaPools.totalized, false))
+                })
+            ).filter(pool => isGroupEnabled(pool.groupId, config.group.enabledGroupIds));
 
             if (expiredPools.length === 0) {
                 return;
@@ -25,9 +29,14 @@ export function scheduleGachaJobs(client: NapLink): void {
 
             logger.info(`Found ${expiredPools.length} expired gacha pool(s)`);
             for (const pool of expiredPools) {
+                if (!isGroupEnabled(pool.groupId, config.group.enabledGroupIds)) continue;
                 try {
                     logger.info(`Settling pool #${pool.id}...`);
                     const results = await totalizeGachaPool(pool.id);
+                    if (!isGroupEnabled(pool.groupId, config.group.enabledGroupIds)) {
+                        logger.info(`Pool #${pool.id} settlement deferred because group ${pool.groupId} is disabled.`);
+                        continue;
+                    }
                     await db.update(gachaPools).set({ totalized: true }).where(eq(gachaPools.id, pool.id));
 
                     logger.info(`Pool #${pool.id} settled. Winners: ${results.length}`);

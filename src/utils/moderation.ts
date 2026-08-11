@@ -3,7 +3,7 @@ import OpenApi, * as $OpenApi from '@alicloud/openapi-client';
 import Util, * as $Util from '@alicloud/tea-util';
 import axios from 'axios';
 import { createHash } from 'crypto';
-import { config as globalConfig } from '@/config';
+import { config as globalConfig, onConfigReload } from '@/config';
 import { logger } from '@/utils/logger';
 import { registerCache } from '@/utils/cache-registry';
 
@@ -45,6 +45,13 @@ export class Moderation {
             name: 'image-moderation-sha256',
             clear: () => this.imageHashModerationCache.clear(),
             size: () => this.imageHashModerationCache.size
+        });
+
+        onConfigReload(({ changedPaths }) => {
+            if (!changedPaths.some(configPath => configPath.startsWith('aliyun.'))) return;
+            this.imageModerationCache.clear();
+            this.imageHashModerationCache.clear();
+            logger.info('Image moderation caches cleared after configuration reload.');
         });
 
         this.cachesRegistered = true;

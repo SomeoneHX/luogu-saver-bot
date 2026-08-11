@@ -1,5 +1,7 @@
 import { NapLink } from '@naplink/naplink';
 import { OneBotV11 } from '@onebots/protocol-onebot-v11/lib';
+import { config } from '@/config';
+import { isGroupEnabled } from '@/utils/group-policy';
 
 export type RegisteredMessageHandler = {
     name: string;
@@ -13,7 +15,7 @@ export type RegisteredEventHandler = {
     order: number;
     events: string[];
     handler: (client: NapLink, event: any) => Promise<void>;
-}
+};
 
 const messageHandlers: RegisteredMessageHandler[] = [];
 const eventHandlers: RegisteredEventHandler[] = [];
@@ -30,6 +32,7 @@ export function registerEventHandler(handler: RegisteredEventHandler): void {
 
 export function setupRegisteredMessageHandlers(client: NapLink): void {
     client.on('message.group', async (data: OneBotV11.GroupMessageEvent) => {
+        if (!isGroupEnabled(data.group_id, config.group.enabledGroupIds)) return;
         for (const handler of messageHandlers) {
             await handler.group?.(client, data);
         }
@@ -46,6 +49,14 @@ export function setupRegisteredEventHandlers(client: NapLink): void {
     for (const handler of eventHandlers) {
         for (const event of handler.events) {
             client.on(event, async (data: any) => {
+                const groupId = Number(data?.group_id);
+                if (
+                    Number.isSafeInteger(groupId) &&
+                    groupId > 0 &&
+                    !isGroupEnabled(groupId, config.group.enabledGroupIds)
+                ) {
+                    return;
+                }
                 await handler.handler(client, data);
             });
         }

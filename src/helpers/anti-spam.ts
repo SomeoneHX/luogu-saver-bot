@@ -20,6 +20,7 @@ export class SpamDetector {
     private warningDecayTimers: Map<number, NodeJS.Timeout> = new Map();
     private userBanInfo: Map<number, { banTime: number; banDuration: number }> = new Map();
     private config: SpamConfig;
+    private cleanupTimer: NodeJS.Timeout;
 
     constructor(config: Partial<SpamConfig> = {}) {
         this.config = {
@@ -32,7 +33,18 @@ export class SpamDetector {
             ...config
         };
         // 这里的全局清理依然使用 setInterval，因为它是伴随类实例生命周期的，没有问题
-        setInterval(() => this.cleanup(), this.config.messageRecordDuration);
+        this.cleanupTimer = setInterval(() => this.cleanup(), this.config.messageRecordDuration);
+    }
+
+    public dispose(): void {
+        clearInterval(this.cleanupTimer);
+        for (const timer of this.warningDecayTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.warningDecayTimers.clear();
+        this.userStates.clear();
+        this.warningLevels.clear();
+        this.userBanInfo.clear();
     }
 
     private triggerViolation(userId: number, level: number) {
@@ -132,9 +144,7 @@ export class SpamDetector {
 
         // 【新增】第一步：先清理掉当前用户已经过期的历史消息
         // 这样 lastMessages 里保留的，就全都是真正在 record 窗口期内的消息
-        state.lastMessages = state.lastMessages.filter(
-            m => now - m.timestamp <= this.config.messageRecordDuration
-        );
+        state.lastMessages = state.lastMessages.filter(m => now - m.timestamp <= this.config.messageRecordDuration);
 
         const cleanedContent = this.cleanText(rawContent);
 
@@ -185,9 +195,7 @@ export class SpamDetector {
 
         for (const [userId, state] of this.userStates.entries()) {
             // 过滤掉所有过期的消息
-            state.lastMessages = state.lastMessages.filter(
-                m => now - m.timestamp <= expireTime
-            );
+            state.lastMessages = state.lastMessages.filter(m => now - m.timestamp <= expireTime);
 
             // 如果清理完后，这个用户近期一条消息都没了，就安全地从 Map 中移除他
             if (state.lastMessages.length === 0) {

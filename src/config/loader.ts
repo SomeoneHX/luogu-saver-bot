@@ -15,17 +15,25 @@ export class ConfigLoader {
             return this.config;
         }
 
-        if (!fs.existsSync(this.configPath)) {
-            this.config = AppConfigSchema.parse({});
-            return this.config;
-        }
+        this.config = this.readConfig();
+        logger.info(`Configuration loaded successfully from ${path.resolve(this.configPath)}`);
+        return this.config;
+    }
 
+    reload(): AppConfig {
+        const nextConfig = this.readConfig();
+        this.config = nextConfig;
+        return nextConfig;
+    }
+
+    private readConfig(): AppConfig {
         try {
+            if (!fs.existsSync(this.configPath)) {
+                return AppConfigSchema.parse({});
+            }
             const fileContents = fs.readFileSync(this.configPath, 'utf8');
             const rawConfig = yaml.load(fileContents);
-            this.config = AppConfigSchema.parse(rawConfig);
-            logger.info(`Configuration loaded successfully from ${path.resolve(this.configPath)}`);
-            return this.config;
+            return AppConfigSchema.parse(rawConfig);
         } catch (error) {
             this.handleError(error);
             throw error;
@@ -39,6 +47,5 @@ export class ConfigLoader {
                 logger.error(`Config validation error at "${path}": ${issue.message}`);
             });
         }
-        process.exit(1);
     }
 }
