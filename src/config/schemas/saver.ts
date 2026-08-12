@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 export const SaverSchema = z.object({
     token: z.string().default(''),
+    newApiBaseUrl: z.string().url().default('https://ai.luogu.me'),
+    newApiAccessToken: z.string().default(''),
+    newApiUserId: z.number().int().nonnegative().default(0),
     sub2ApiBaseUrl: z.string().url().default('https://sub2api.luogu.me'),
     sub2ApiAdminApiKey: z.string().default(''),
     sub2ApiUserAgent: z

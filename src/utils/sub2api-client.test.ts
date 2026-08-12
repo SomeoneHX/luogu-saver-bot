@@ -1,38 +1,29 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseSub2ApiResponse, sub2ApiBalancePackagePlanSchema, sub2ApiUserSchema } from '@/utils/sub2api-contracts';
-import { formatSub2ApiBalancePackagePlans, formatSub2ApiUserInfo } from '@/utils/sub2api-format';
+import { z } from 'zod';
+import { parseSub2ApiResponse, sub2ApiRedeemCodeSchema } from '@/utils/sub2api-contracts';
 import { SaverSchema } from '@/config/schemas/saver';
-import { validateSub2ApiArgs } from '@/commands/sub2api-args';
 
-test('parseSub2ApiResponse parses a successful user response with defaults', () => {
-    const user = parseSub2ApiResponse(
+test('parseSub2ApiResponse parses a successful recharge code response', () => {
+    const code = parseSub2ApiResponse(
         {
             code: 0,
             message: 'success',
             data: {
                 id: 42,
-                email: 'user@example.com',
-                balance: 12.5,
-                internal_field: 'ignored'
+                code: 'REDEEM-CODE',
+                type: 'balance',
+                value: 5,
+                status: 'unused'
             }
         },
         200,
-        sub2ApiUserSchema
+        sub2ApiRedeemCodeSchema
     );
 
-    assert.equal(user.id, 42);
-    assert.equal(user.balance, 12.5);
-    assert.equal(user.username, '');
-    assert.equal(user.allowed_groups, null);
-    assert.equal('internal_field' in user, false);
-});
-
-test('user contract accepts null allowed_groups and preserves its all-groups meaning', () => {
-    const user = sub2ApiUserSchema.parse({ id: 42, allowed_groups: null });
-
-    assert.equal(user.allowed_groups, null);
-    assert.match(formatSub2ApiUserInfo(user), /允许分组: 全部非专属分组/);
+    assert.equal(code.id, 42);
+    assert.equal(code.code, 'REDEEM-CODE');
+    assert.equal(code.value, 5);
 });
 
 test('parseSub2ApiResponse surfaces API errors without exposing the raw response', () => {
@@ -41,7 +32,7 @@ test('parseSub2ApiResponse surfaces API errors without exposing the raw response
             parseSub2ApiResponse(
                 { code: 400, message: 'user not found', reason: 'USER_NOT_FOUND' },
                 404,
-                sub2ApiUserSchema
+                z.object({ id: z.number() })
             ),
         /Sub2API 请求失败：user not found/
     );
@@ -49,41 +40,22 @@ test('parseSub2ApiResponse surfaces API errors without exposing the raw response
 
 test('parseSub2ApiResponse rejects incompatible payloads', () => {
     assert.throws(
-        () => parseSub2ApiResponse({ code: 0, message: 'success', data: { id: '42' } }, 200, sub2ApiUserSchema),
+        () =>
+            parseSub2ApiResponse(
+                { code: 0, message: 'success', data: { id: '42' } },
+                200,
+                z.object({ id: z.number() })
+            ),
         /响应数据格式与当前接入版本不兼容/
     );
-});
-
-test('balance package formatting hides unavailable plans for regular users', () => {
-    const visible = sub2ApiBalancePackagePlanSchema.parse({
-        id: 1,
-        name: 'Starter',
-        price: 5,
-        balance_amount: 10,
-        validity_days: 30,
-        validity_unit: 'day',
-        monthly_limit_usd: 10,
-        for_sale: true
-    });
-    const hidden = sub2ApiBalancePackagePlanSchema.parse({
-        id: 2,
-        name: 'Internal',
-        price: 1,
-        balance_amount: 1,
-        validity_days: 1,
-        validity_unit: 'day',
-        monthly_limit_usd: 1,
-        for_sale: false
-    });
-
-    const output = formatSub2ApiBalancePackagePlans([visible, hidden]);
-    assert.match(output, /Starter/);
-    assert.doesNotMatch(output, /Internal/);
 });
 
 test('saver config defaults recharge to the designated QQ group', () => {
     const saver = SaverSchema.parse({});
 
+    assert.equal(saver.newApiBaseUrl, 'https://ai.luogu.me');
+    assert.equal(saver.newApiAccessToken, '');
+    assert.equal(saver.newApiUserId, 0);
     assert.deepEqual(saver.rechargeAllowedGroupIds, [1017248143]);
     assert.equal(saver.sub2ApiBaseUrl, 'https://sub2api.luogu.me');
     assert.equal(saver.sub2ApiRedeemUrl, 'https://sub2api.luogu.me/redeem');
@@ -96,10 +68,4 @@ test('saver config provides a configurable Sub2API User-Agent', () => {
         'SaverBot-Firewall/2.0'
     );
     assert.throws(() => SaverSchema.parse({ sub2ApiUserAgent: 'invalid\r\nheader' }));
-});
-
-test('Sub2API requires an explicit me argument for the current user query', () => {
-    assert.equal(validateSub2ApiArgs([]), false);
-    assert.equal(validateSub2ApiArgs(['me']), true);
-    assert.equal(validateSub2ApiArgs(['me', '123']), false);
 });

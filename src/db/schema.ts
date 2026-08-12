@@ -199,6 +199,26 @@ export const rngdleScorePercentiles = sqliteTable('rngdle_score_percentiles', {
     updatedAt: integer('updated_at').notNull()
 });
 
+export const newApiBindings = sqliteTable('legacy_newapi_bindings', {
+    userId: integer('user_id').primaryKey(),
+    newApiUserId: integer('newapi_user_id').notNull(),
+    updatedAt: integer('updated_at').notNull()
+});
+
+export const newApiPlanRedemptions = sqliteTable(
+    'legacy_newapi_plan_redemptions',
+    {
+        id: integer('id').primaryKey({ autoIncrement: true }),
+        userId: integer('user_id').notNull(),
+        planId: integer('plan_id').notNull(),
+        count: integer('count').notNull().default(0),
+        updatedAt: integer('updated_at').notNull()
+    },
+    table => ({
+        userPlanUnique: uniqueIndex('newapi_plan_redemptions_user_plan_unique').on(table.userId, table.planId)
+    })
+);
+
 export const sub2ApiBindings = sqliteTable(
     'sub2api_bindings',
     {
