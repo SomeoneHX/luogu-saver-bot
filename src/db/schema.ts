@@ -219,18 +219,6 @@ export const newApiPlanRedemptions = sqliteTable(
     })
 );
 
-export const sub2ApiBindings = sqliteTable(
-    'sub2api_bindings',
-    {
-        userId: integer('user_id').primaryKey(),
-        sub2ApiUserId: integer('sub2api_user_id').notNull(),
-        updatedAt: integer('updated_at').notNull()
-    },
-    table => ({
-        sub2ApiUserUnique: uniqueIndex('sub2api_bindings_sub2api_user_unique').on(table.sub2ApiUserId)
-    })
-);
-
 export const qaKnowledgeItems = sqliteTable('qa_knowledge_items', {
     id: integer('id').primaryKey({ autoIncrement: true }),
     title: text('title').notNull(),

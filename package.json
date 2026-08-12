@@ -5,7 +5,7 @@
     "main": "dist/index.js",
     "scripts": {
         "build": "tsc",
-        "test": "tsx --test src/utils/sub2api-client.test.ts src/config/config.test.ts",
+        "test": "tsx --test src/config/saver.test.ts src/config/config.test.ts",
         "dev": "tsx watch src/index.ts",
         "db:generate": "drizzle-kit generate",
         "db:migrate": "drizzle-kit migrate",

@@ -105,6 +105,7 @@ function assertPositiveInteger(value: number, message: string): void {
 function buildAdminHeaders() {
     return {
         Authorization: `${resolveAccessToken()}`,
+        'User-Agent': config.saver.newApiUserAgent,
         ...(config.saver.newApiUserId > 0 ? { 'New-Api-User': String(config.saver.newApiUserId) } : {})
     };
 }
@@ -356,6 +357,44 @@ export function formatNewApiSubscriptions(
             ].join('\n');
         })
     ].join('\n\n');
+}
+
+function extractFirstRedemptionKey(data: unknown): string | null {
+    if (!data || typeof data !== 'object') return null;
+
+    const payload = (data as Record<string, unknown>).data;
+    if (Array.isArray(payload)) {
+        const first = payload[0];
+        return typeof first === 'string' && first.trim() ? first : null;
+    }
+
+    if (payload && typeof payload === 'object') {
+        const key = (payload as Record<string, unknown>).key;
+        return typeof key === 'string' && key.trim() ? key : null;
+    }
+
+    return null;
+}
+
+export async function createRedemptionCodeByAdmin(amountUsd: number, name: string): Promise<string> {
+    const quota = Math.round(amountUsd * DEFAULT_QUOTA_PER_USD);
+    if (quota <= 0) throw new Error('兑换额度无效。');
+
+    const response = await axios.post(
+        resolveApiUrl('/api/redemption/'),
+        {
+            name: name.slice(0, 20),
+            count: 1,
+            quota
+        },
+        { headers: buildAdminHeaders() }
+    );
+
+    assertNewApiSuccess(response.data, '兑换码接口返回失败');
+
+    const redemptionCode = extractFirstRedemptionKey(response.data);
+    if (!redemptionCode) throw new Error('兑换码创建成功，但未从接口响应中解析到兑换码。');
+    return redemptionCode;
 }
 
 export async function getNewApiUserInfo(userId: number): Promise<NewApiUserInfo> {

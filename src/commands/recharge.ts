@@ -7,10 +7,11 @@ import { isSuperUser } from '@/utils/permission';
 import { db } from '@/db';
 import { rechargeDailyUsages } from '@/db/schema';
 import { config } from '@/config';
-import { createSub2ApiBalanceRedeemCode } from '@/utils/sub2api-client';
+import { createRedemptionCodeByAdmin } from '@/utils/newapi';
 import { isValidUser } from '@/utils/validator';
 import { normalizeConditionalUserTargets } from '@/utils/command-args';
 import { getErrorMessage } from '@/utils/error';
+import { getRandomHexString } from '@/utils/random';
 
 const MONEY_REGEX = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/;
 
@@ -81,11 +82,10 @@ export class RechargeCommand implements Command<OneBotV11.GroupMessageEvent> {
 
         let redemptionCode: string;
         try {
-            const result = await createSub2ApiBalanceRedeemCode(
+            redemptionCode = await createRedemptionCodeByAdmin(
                 amountUsd,
-                `lgs-bot-recharge-${data.group_id}-${data.message_id}-${data.user_id}-${targetUserId}-${amountCents}`
+                `${data.user_id}-${getRandomHexString(10)}-${fromCents(amountCents)}`
             );
-            redemptionCode = result.code;
         } catch (error) {
             await reply(client, data, `充值失败：${getErrorMessage(error)}`);
             return;
@@ -114,8 +114,8 @@ export class RechargeCommand implements Command<OneBotV11.GroupMessageEvent> {
                 '你的充值兑换码已生成。',
                 `金额: $${fromCents(amountCents)}。`,
                 `兑换码: ${redemptionCode}。`,
-                '请尽快前往 Sub2API 使用。',
-                `地址: ${config.saver.sub2ApiRedeemUrl}`,
+                '请尽快前往 NewAPI 使用。',
+                `地址: ${config.saver.newApiBaseUrl.replace(/\/$/, '')}/console/topup`,
                 '--------------------',
                 '欢迎使用群主雨云推广购买服务器！',
                 '推广链接：https://www.rainyun.com/federico_?s=bot',
