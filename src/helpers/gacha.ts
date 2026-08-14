@@ -130,7 +130,8 @@ export async function reportGachaResult(client: NapLink, results: GachaResult[],
         if (itemList) {
             return `用户 ${result.userName}(${result.userId}) 获得了: ${itemList}`;
         }
-    });
+        return null;
+    }).filter(i => i);
     await sendGroupMessage(
         client,
         groupId,
