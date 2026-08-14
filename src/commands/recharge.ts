@@ -30,7 +30,7 @@ function getCurrentDayKey(): string {
 export class RechargeCommand implements Command<OneBotV11.GroupMessageEvent> {
     name = 'recharge';
     aliases = ['充值'];
-    description = '在指定群聊生成充值兑换码（普通用户每日最多 $5），兑换码通过私信发送。';
+    description = '在指定群聊生成充值兑换码，兑换码通过私信发送。';
     cooldown = 10000;
     usage = '/recharge <金额> [@用户/QQ号]';
     scope: CommandScope = 'group';
@@ -41,6 +41,8 @@ export class RechargeCommand implements Command<OneBotV11.GroupMessageEvent> {
         if (args.length === 2) return MONEY_REGEX.test(args[0]) && isValidUser(args[1]);
         return false;
     }
+
+    private notDeliveredCode : Map<number, { amount: number, code: string }> = new Map();
 
     async execute(args: string[], client: NapLink, data: OneBotV11.GroupMessageEvent): Promise<void> {
         if (!config.saver.rechargeAllowedGroupIds.includes(data.group_id)) {
@@ -67,8 +69,9 @@ export class RechargeCommand implements Command<OneBotV11.GroupMessageEvent> {
         });
 
         const usedCents = existingUsage?.amountCents ?? 0;
+        const lastCodeNotDelivered = (this.notDeliveredCode.has(callerId) && this.notDeliveredCode.get(callerId)?.amount === amountCents);
 
-        if (!callerIsSuperUser) {
+        if (!callerIsSuperUser && !lastCodeNotDelivered) {
             if (usedCents + amountCents > dailyLimitCents) {
                 const remain = Math.max(0, dailyLimitCents - usedCents);
                 await reply(
@@ -82,34 +85,21 @@ export class RechargeCommand implements Command<OneBotV11.GroupMessageEvent> {
 
         let redemptionCode: string;
         try {
-            redemptionCode = await createRedemptionCodeByAdmin(
-                amountUsd,
-                `${data.user_id}-${getRandomHexString(10)}-${fromCents(amountCents)}`
-            );
+            if (lastCodeNotDelivered) {
+                redemptionCode = this.notDeliveredCode.get(callerId)!.code;
+            }
+            else {
+                redemptionCode = await createRedemptionCodeByAdmin(
+                    amountUsd,
+                    `${data.user_id}-${getRandomHexString(10)}-${fromCents(amountCents)}`
+                );
+            }
         } catch (error) {
             await reply(client, data, `充值失败：${getErrorMessage(error)}`);
             return;
         }
 
         try {
-            if (!callerIsSuperUser) {
-                await db
-                    .insert(rechargeDailyUsages)
-                    .values({
-                        userId: callerId,
-                        dayKey: today,
-                        amountCents,
-                        updatedAt: Date.now()
-                    })
-                    .onConflictDoUpdate({
-                        target: [rechargeDailyUsages.userId, rechargeDailyUsages.dayKey],
-                        set: {
-                            amountCents: usedCents + amountCents,
-                            updatedAt: Date.now()
-                        }
-                    });
-            }
-
             const codeMessage = [
                 '你的充值兑换码已生成。',
                 `金额: $${fromCents(amountCents)}。`,
@@ -124,8 +114,28 @@ export class RechargeCommand implements Command<OneBotV11.GroupMessageEvent> {
             ].join('\n');
 
             try {
+                if (!callerIsSuperUser && !lastCodeNotDelivered) {
+                    await db
+                        .insert(rechargeDailyUsages)
+                        .values({
+                            userId: callerId,
+                            dayKey: today,
+                            amountCents,
+                            updatedAt: Date.now()
+                        })
+                        .onConflictDoUpdate({
+                            target: [rechargeDailyUsages.userId, rechargeDailyUsages.dayKey],
+                            set: {
+                                amountCents: usedCents + amountCents,
+                                updatedAt: Date.now()
+                            }
+                        });
+                }
                 await sendPrivateMessage(client, targetUserId, codeMessage);
             } catch {
+                if (!callerIsSuperUser && !lastCodeNotDelivered) {
+                    this.notDeliveredCode.set(targetUserId, {amount: amountCents, code: redemptionCode});
+                }
                 await reply(client, data, '兑换码已生成但未送达，请尝试让接收用户添加机器人好友后重试。');
                 return;
             }
