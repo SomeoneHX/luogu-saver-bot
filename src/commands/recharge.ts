@@ -70,6 +70,12 @@ export class RechargeCommand implements Command<OneBotV11.GroupMessageEvent> {
 
         const usedCents = existingUsage?.amountCents ?? 0;
         const lastCodeNotDelivered = (this.notDeliveredCode.has(callerId) && this.notDeliveredCode.get(callerId)?.amount === amountCents);
+        const amountNotMatch = (this.notDeliveredCode.has(callerId) && this.notDeliveredCode.get(callerId)?.amount !== amountCents);
+
+        if (amountNotMatch) {
+            await reply(client, data, `你上次生成的兑换码金额为 $${fromCents(this.notDeliveredCode.get(callerId)!.amount)}。\n请先充值这个额度领取已存在的兑换码再申请新的兑换码。`);
+            return;
+        }
 
         if (!callerIsSuperUser && !lastCodeNotDelivered) {
             if (usedCents + amountCents > dailyLimitCents) {
@@ -132,6 +138,9 @@ export class RechargeCommand implements Command<OneBotV11.GroupMessageEvent> {
                         });
                 }
                 await sendPrivateMessage(client, targetUserId, codeMessage);
+                if (lastCodeNotDelivered) {
+                    this.notDeliveredCode.delete(callerId);
+                }
             } catch {
                 if (!callerIsSuperUser && !lastCodeNotDelivered) {
                     this.notDeliveredCode.set(targetUserId, {amount: amountCents, code: redemptionCode});
