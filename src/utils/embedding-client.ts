@@ -24,6 +24,17 @@ type EmbeddingResponseMetadata = {
     contentType?: string;
 };
 
+export function validateEmbeddingEndpoint(endpoint: string): void {
+    const url = new URL(endpoint);
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    const pathname = url.pathname.replace(/\/+$/, '');
+    if (hostname === 'openrouter.ai' && pathname !== '/api/v1/embeddings') {
+        throw new Error(
+            'OpenRouter Embedding endpoint 必须使用 https://openrouter.ai/api/v1/embeddings；模型页面 URL 应配置在 model 字段之外。'
+        );
+    }
+}
+
 function createTextResponseError(
     kind: 'empty' | 'html' | 'event-stream' | 'text',
     text: string,
@@ -89,9 +100,12 @@ export function parseEmbeddingResponse(data: unknown, metadata: EmbeddingRespons
 }
 
 export async function createEmbedding(input: string, settings: EmbeddingRequestSettings): Promise<number[]> {
+    validateEmbeddingEndpoint(settings.endpoint);
     const headers: Record<string, string> = {
         Accept: 'application/json',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'luogu-saver-bot/1.0.0',
+        'X-Title': 'SaverBot'
     };
     if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
 
@@ -105,6 +119,7 @@ export async function createEmbedding(input: string, settings: EmbeddingRequestS
         {
             headers,
             timeout: settings.requestTimeoutMs,
+            maxRedirects: 0,
             responseType: 'json'
         }
     );

@@ -17,7 +17,7 @@ import {
 } from '@/helpers/message-embedding';
 import { groupMessageEmbeddingMeans, userMessageEmbeddingProfiles } from '@/db/schema';
 import { EmbeddingSchema } from '@/config/schemas/embedding';
-import { parseEmbeddingResponse } from '@/utils/embedding-client';
+import { parseEmbeddingResponse, validateEmbeddingEndpoint } from '@/utils/embedding-client';
 import { canViewMessageEmbeddingProfile } from '@/utils/embedding-profile-access';
 
 function decodeVector(buffer: Buffer): number[] {
@@ -33,6 +33,15 @@ test('embedding config defaults to an unconfigured API and a 30-day half-life', 
     assert.equal(embedding.endpoint, '');
     assert.equal(embedding.model, 'text-embedding-3-small');
     assert.equal(embedding.decayHalfLifeMs, 30 * 24 * 60 * 60 * 1000);
+});
+
+test('OpenRouter model pages are rejected as embedding endpoints', () => {
+    assert.doesNotThrow(() => validateEmbeddingEndpoint('https://openrouter.ai/api/v1/embeddings'));
+    assert.throws(
+        () => validateEmbeddingEndpoint('https://openrouter.ai/baai/bge-m3'),
+        /OpenRouter Embedding endpoint/
+    );
+    assert.doesNotThrow(() => validateEmbeddingEndpoint('https://embedding.example/v1/embeddings'));
 });
 
 test('embedding response parser accepts OpenRouter JSON and event-stream text without exposing bodies', () => {
