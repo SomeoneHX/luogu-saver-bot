@@ -56,7 +56,9 @@ test('out-of-order embedding responses commit in arrival order for both group an
             user_id INTEGER PRIMARY KEY NOT NULL,
             opted_out INTEGER NOT NULL,
             revision INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
+            updated_at INTEGER NOT NULL,
+            notice_sent_at INTEGER,
+            last_spoke_at INTEGER
         );
     `);
     const database = drizzle(sqlite, { schema });

@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from '@/db/schema';
 import { groupMessageEmbeddingMeans, messageEmbeddingPreferences, userMessageEmbeddingProfiles } from '@/db/schema';
@@ -57,6 +57,17 @@ export type UserMessageEmbeddingSummary = {
     maximum: number;
     l2Norm: number;
     preview: number[];
+};
+
+export type MessageAuthorGuess = {
+    userId: number;
+    similarity: number;
+    effectiveWeight: number;
+};
+
+export type MessageEmbeddingNoticeClaim = {
+    optedOut: boolean;
+    claimedAt: number;
 };
 
 function assertFiniteVector(vector: ArrayLike<number>, label: string): void {
@@ -176,6 +187,90 @@ export function isMessageEmbeddingOptedOut(database: MessageEmbeddingDatabase, u
     return getMessageEmbeddingPreference(database, userId).optedOut;
 }
 
+export function touchMessageEmbeddingLastSpokeAt(
+    database: MessageEmbeddingDatabase,
+    userId: number,
+    spokenAt: number
+): MessageEmbeddingPreference {
+    if (!Number.isSafeInteger(spokenAt) || spokenAt < 0) {
+        throw new Error('Message embedding last-spoken timestamp is invalid.');
+    }
+    database.run(sql`
+        INSERT INTO message_embedding_preferences (
+            user_id,
+            opted_out,
+            revision,
+            updated_at,
+            notice_sent_at,
+            last_spoke_at
+        )
+        VALUES (${userId}, 0, 0, ${spokenAt}, NULL, ${spokenAt})
+        ON CONFLICT(user_id) DO UPDATE SET
+            last_spoke_at = MAX(
+                COALESCE(message_embedding_preferences.last_spoke_at, 0),
+                excluded.last_spoke_at
+            )
+        WHERE message_embedding_preferences.opted_out = 0
+    `);
+    return getMessageEmbeddingPreference(database, userId);
+}
+
+export function claimMessageEmbeddingNotice(
+    database: MessageEmbeddingDatabase,
+    userId: number,
+    claimedAt: number
+): MessageEmbeddingNoticeClaim | null {
+    if (!Number.isSafeInteger(claimedAt) || claimedAt < 0) {
+        throw new Error('Message embedding notice timestamp is invalid.');
+    }
+    const inserted = database
+        .insert(messageEmbeddingPreferences)
+        .values({
+            userId,
+            optedOut: false,
+            revision: 0,
+            updatedAt: claimedAt,
+            noticeSentAt: claimedAt,
+            lastSpokeAt: null
+        })
+        .onConflictDoNothing()
+        .run();
+    if (inserted.changes > 0) return { optedOut: false, claimedAt };
+
+    const claimed = database
+        .update(messageEmbeddingPreferences)
+        .set({ noticeSentAt: claimedAt })
+        .where(and(eq(messageEmbeddingPreferences.userId, userId), isNull(messageEmbeddingPreferences.noticeSentAt)))
+        .run();
+    if (claimed.changes === 0) return null;
+
+    const preference = database
+        .select({ optedOut: messageEmbeddingPreferences.optedOut })
+        .from(messageEmbeddingPreferences)
+        .where(eq(messageEmbeddingPreferences.userId, userId))
+        .get();
+    return preference ? { optedOut: preference.optedOut, claimedAt } : null;
+}
+
+export function releaseMessageEmbeddingNoticeClaim(
+    database: MessageEmbeddingDatabase,
+    userId: number,
+    claimedAt: number
+): boolean {
+    return (
+        database
+            .update(messageEmbeddingPreferences)
+            .set({ noticeSentAt: null })
+            .where(
+                and(
+                    eq(messageEmbeddingPreferences.userId, userId),
+                    eq(messageEmbeddingPreferences.noticeSentAt, claimedAt)
+                )
+            )
+            .run().changes > 0
+    );
+}
+
 export function optOutMessageEmbedding(
     database: MessageEmbeddingDatabase,
     userId: number,
@@ -193,12 +288,13 @@ export function optOutMessageEmbedding(
                 .delete(userMessageEmbeddingProfiles)
                 .where(eq(userMessageEmbeddingProfiles.userId, userId))
                 .run().changes > 0;
+        const noticeSentAt = existing?.noticeSentAt ?? updatedAt;
         transaction
             .insert(messageEmbeddingPreferences)
-            .values({ userId, optedOut: true, revision, updatedAt })
+            .values({ userId, optedOut: true, revision, updatedAt, noticeSentAt, lastSpokeAt: null })
             .onConflictDoUpdate({
                 target: messageEmbeddingPreferences.userId,
-                set: { optedOut: true, revision, updatedAt }
+                set: { optedOut: true, revision, updatedAt, noticeSentAt, lastSpokeAt: null }
             })
             .run();
         return { alreadyOptedOut: existing?.optedOut === true, deletedProfile, revision };
@@ -216,17 +312,83 @@ export function optInMessageEmbedding(
             .from(messageEmbeddingPreferences)
             .where(eq(messageEmbeddingPreferences.userId, userId))
             .get();
-        if (!existing || !existing.optedOut) {
-            return { alreadyOptedIn: true, revision: existing?.revision ?? 0 };
+        if (!existing) {
+            transaction
+                .insert(messageEmbeddingPreferences)
+                .values({
+                    userId,
+                    optedOut: false,
+                    revision: 0,
+                    updatedAt,
+                    noticeSentAt: updatedAt,
+                    lastSpokeAt: null
+                })
+                .run();
+            return { alreadyOptedIn: true, revision: 0 };
+        }
+        if (!existing.optedOut) {
+            if (existing.noticeSentAt === null) {
+                transaction
+                    .update(messageEmbeddingPreferences)
+                    .set({ noticeSentAt: updatedAt })
+                    .where(eq(messageEmbeddingPreferences.userId, userId))
+                    .run();
+            }
+            return { alreadyOptedIn: true, revision: existing.revision };
         }
 
         const revision = existing.revision + 1;
         transaction
             .update(messageEmbeddingPreferences)
-            .set({ optedOut: false, revision, updatedAt })
+            .set({
+                optedOut: false,
+                revision,
+                updatedAt,
+                noticeSentAt: existing.noticeSentAt ?? updatedAt,
+                lastSpokeAt: null
+            })
             .where(eq(messageEmbeddingPreferences.userId, userId))
             .run();
         return { alreadyOptedIn: false, revision };
+    });
+}
+
+export function optOutInactiveMessageEmbeddingUsers(
+    database: MessageEmbeddingDatabase,
+    cutoffTimestamp: number,
+    updatedAt: number
+): number {
+    if (!Number.isSafeInteger(cutoffTimestamp) || cutoffTimestamp < 0) {
+        throw new Error('Embedding inactivity cutoff timestamp is invalid.');
+    }
+    if (!Number.isSafeInteger(updatedAt) || updatedAt < 0) {
+        throw new Error('Embedding preference update timestamp is invalid.');
+    }
+
+    return database.transaction(transaction => {
+        transaction.run(sql`
+            DELETE FROM user_message_embedding_profiles
+            WHERE user_id IN (
+                SELECT user_id
+                FROM message_embedding_preferences
+                WHERE opted_out = 0 AND last_spoke_at < ${cutoffTimestamp}
+            )
+        `);
+        return transaction
+            .update(messageEmbeddingPreferences)
+            .set({
+                optedOut: true,
+                revision: sql`${messageEmbeddingPreferences.revision} + 1`,
+                updatedAt,
+                lastSpokeAt: null
+            })
+            .where(
+                and(
+                    eq(messageEmbeddingPreferences.optedOut, false),
+                    lt(messageEmbeddingPreferences.lastSpokeAt, cutoffTimestamp)
+                )
+            )
+            .run().changes;
     });
 }
 
@@ -399,4 +561,77 @@ export function getUserMessageEmbeddingSummary(
         updatedAt: record.updatedAt,
         ...summarizeVector(record.featureVector, record.dimensions)
     };
+}
+
+export function guessMessageEmbeddingAuthor(
+    database: MessageEmbeddingDatabase,
+    groupId: number,
+    candidateUserIds: number[],
+    embedding: readonly number[],
+    spaceKey: string
+): MessageAuthorGuess | null {
+    if (candidateUserIds.length === 0) return null;
+
+    const groupRecord = database
+        .select()
+        .from(groupMessageEmbeddingMeans)
+        .where(eq(groupMessageEmbeddingMeans.groupId, groupId))
+        .get();
+    if (
+        !groupRecord ||
+        groupRecord.spaceKey !== spaceKey ||
+        groupRecord.dimensions !== embedding.length ||
+        groupRecord.sampleCount <= 0
+    ) {
+        return null;
+    }
+
+    const groupMean = decodeVector(groupRecord.meanVector, groupRecord.dimensions);
+    const residual = calculateStreamingMean(groupMean, groupRecord.sampleCount, embedding).residual;
+    let residualMagnitudeSquared = 0;
+    for (let index = 0; index < residual.length; index += 1) {
+        residualMagnitudeSquared += residual[index] * residual[index];
+    }
+    if (residualMagnitudeSquared === 0) return null;
+
+    let bestGuess: MessageAuthorGuess | null = null;
+    const residualMagnitude = Math.sqrt(residualMagnitudeSquared);
+    for (let offset = 0; offset < candidateUserIds.length; offset += 500) {
+        const candidateChunk = candidateUserIds.slice(offset, offset + 500);
+        const profiles = database
+            .select()
+            .from(userMessageEmbeddingProfiles)
+            .where(
+                and(
+                    inArray(userMessageEmbeddingProfiles.userId, candidateChunk),
+                    eq(userMessageEmbeddingProfiles.spaceKey, spaceKey),
+                    eq(userMessageEmbeddingProfiles.dimensions, embedding.length)
+                )
+            )
+            .all();
+        for (const profile of profiles) {
+            const featureVector = decodeVector(profile.featureVector, profile.dimensions);
+            let dotProduct = 0;
+            let featureMagnitudeSquared = 0;
+            for (let index = 0; index < featureVector.length; index += 1) {
+                dotProduct += residual[index] * featureVector[index];
+                featureMagnitudeSquared += featureVector[index] * featureVector[index];
+            }
+            if (featureMagnitudeSquared === 0) continue;
+
+            const similarity = dotProduct / (residualMagnitude * Math.sqrt(featureMagnitudeSquared));
+            if (
+                !bestGuess ||
+                similarity > bestGuess.similarity ||
+                (similarity === bestGuess.similarity && profile.userId < bestGuess.userId)
+            ) {
+                bestGuess = {
+                    userId: profile.userId,
+                    similarity,
+                    effectiveWeight: profile.effectiveWeight
+                };
+            }
+        }
+    }
+    return bestGuess;
 }

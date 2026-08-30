@@ -23,6 +23,7 @@ import { startWebhookServer } from '@/server/webhook';
 import { logger } from '@/utils/logger';
 import { setupGroupAddRequestHandler } from '@/handlers/group-add-request.handler';
 import { setupMessageEmbeddingHandler } from '@/handlers/message-embedding.handler';
+import { setupMessageEmbeddingNoticeHandler } from '@/handlers/message-embedding-notice.handler';
 import { startConfigReloadWatcher } from '@/config';
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
@@ -44,6 +45,7 @@ function initializeApp() {
     setupAntiSpamHandler();
     setupMessageEmbeddingHandler();
     setupGroupAddRequestHandler();
+    setupMessageEmbeddingNoticeHandler();
     setupRegisteredMessageHandlers(client);
     setupRegisteredEventHandlers(client);
     scheduleGachaJobs(client);

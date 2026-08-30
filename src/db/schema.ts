@@ -246,9 +246,17 @@ export const userMessageEmbeddingProfiles = sqliteTable('user_message_embedding_
     updatedAt: integer('updated_at').notNull()
 });
 
-export const messageEmbeddingPreferences = sqliteTable('message_embedding_preferences', {
-    userId: integer('user_id').primaryKey(),
-    optedOut: integer('opted_out', { mode: 'boolean' }).notNull(),
-    revision: integer('revision').notNull(),
-    updatedAt: integer('updated_at').notNull()
-});
+export const messageEmbeddingPreferences = sqliteTable(
+    'message_embedding_preferences',
+    {
+        userId: integer('user_id').primaryKey(),
+        optedOut: integer('opted_out', { mode: 'boolean' }).notNull(),
+        revision: integer('revision').notNull(),
+        updatedAt: integer('updated_at').notNull(),
+        noticeSentAt: integer('notice_sent_at'),
+        lastSpokeAt: integer('last_spoke_at')
+    },
+    table => ({
+        lastSpokeAtIndex: index('message_embedding_preferences_last_spoke_at_index').on(table.lastSpokeAt)
+    })
+);

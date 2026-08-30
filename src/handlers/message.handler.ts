@@ -10,10 +10,9 @@ import { commandAliases } from '@/db/schema';
 import { reply } from '@/utils/client';
 import { AliasScope, AllMessageEvent } from '@/types';
 import { isModuleEnabled } from '@/utils/module-toggle';
-import { MessageBuilder } from '@/utils/message-builder';
-import { MessageSegment } from '@/types/message';
 import { registerMessageHandler } from '@/handlers/registry';
 import { checkCommandBan } from '@/utils/command-ban';
+import { parseCommandMessage } from '@/utils/command-message';
 
 const cooldowns = new Map<string, number>();
 
@@ -126,43 +125,9 @@ function cleanupCooldowns() {
         }
     }
 }
-function getMessageSegments(data: AllMessageEvent): MessageSegment[] {
-    return data.message?.length
-        ? (data.message as MessageSegment[])
-        : new MessageBuilder().cqCode(data.raw_message).build();
-}
-
-function extractReplyMessageId(segments: MessageSegment[]): number | undefined {
-    const firstSegment = segments[0];
-    if (!firstSegment || firstSegment.type !== 'reply') {
-        return undefined;
-    }
-
-    const id = Number(firstSegment.data.id);
-    return Number.isInteger(id) && id > 0 ? id : undefined;
-}
-
-function getCommandSegments(data: AllMessageEvent, segments: MessageSegment[]): MessageSegment[] {
-    let startIndex = segments[0]?.type === 'reply' ? 1 : 0;
-    const firstCommandSegment = segments[startIndex];
-    if (
-        firstCommandSegment?.type === 'at' &&
-        String((firstCommandSegment.data as { qq?: string | number }).qq) === String(data.self_id)
-    ) {
-        startIndex += 1;
-    }
-
-    return segments.slice(startIndex);
-}
-
-function getCommandRawMessage(segments: MessageSegment[]): string {
-    return new MessageBuilder().segment(segments).buildCqCode().trimStart();
-}
 
 async function handleMessage(client: NapLink, data: AllMessageEvent) {
-    const segments = getMessageSegments(data);
-    const replyMessageId = extractReplyMessageId(segments);
-    const rawMessage = getCommandRawMessage(getCommandSegments(data, segments));
+    const { rawMessage, replyMessageId } = parseCommandMessage(data);
 
     if (!rawMessage.startsWith(config.command.prefix)) {
         return;

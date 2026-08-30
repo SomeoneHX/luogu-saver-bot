@@ -1,20 +1,27 @@
 {
-  "version": "7",
-  "dialect": "sqlite",
-  "entries": [
-    {
-      "idx": 7,
-      "version": "6",
-      "when": 1788069654000,
-      "tag": "0007_message_embedding_profiles",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "6",
-      "when": 1788074152000,
-      "tag": "0008_embedding_preferences",
-      "breakpoints": true
-    }
-  ]
+    "version": "7",
+    "dialect": "sqlite",
+    "entries": [
+        {
+            "idx": 7,
+            "version": "6",
+            "when": 1788069654000,
+            "tag": "0007_message_embedding_profiles",
+            "breakpoints": true
+        },
+        {
+            "idx": 8,
+            "version": "6",
+            "when": 1788074152000,
+            "tag": "0008_embedding_preferences",
+            "breakpoints": true
+        },
+        {
+            "idx": 9,
+            "version": "6",
+            "when": 1788078705062,
+            "tag": "0009_embedding_consent_notices",
+            "breakpoints": true
+        }
+    ]
 }

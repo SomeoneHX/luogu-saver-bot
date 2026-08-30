@@ -7,18 +7,24 @@ import * as schema from '@/db/schema';
 import {
     calculateDecayedAverage,
     calculateStreamingMean,
+    claimMessageEmbeddingNotice,
     getGroupMessageEmbeddingSummary,
-    getUserMessageEmbeddingSummary,
     getMessageEmbeddingPreference,
+    getUserMessageEmbeddingSummary,
+    guessMessageEmbeddingAuthor,
     isMessageEmbeddingOptedOut,
     optInMessageEmbedding,
+    optOutInactiveMessageEmbeddingUsers,
     optOutMessageEmbedding,
-    recordMessageEmbedding
+    recordMessageEmbedding,
+    releaseMessageEmbeddingNoticeClaim,
+    touchMessageEmbeddingLastSpokeAt
 } from '@/helpers/message-embedding';
-import { groupMessageEmbeddingMeans, userMessageEmbeddingProfiles } from '@/db/schema';
+import { groupMessageEmbeddingMeans, messageEmbeddingPreferences, userMessageEmbeddingProfiles } from '@/db/schema';
 import { EmbeddingSchema } from '@/config/schemas/embedding';
 import { parseEmbeddingResponse, validateEmbeddingEndpoint } from '@/utils/embedding-client';
 import { canViewMessageEmbeddingProfile } from '@/utils/embedding-profile-access';
+import { parseEmbeddingCutoffTimestamp } from '@/utils/embedding-cutoff';
 
 function decodeVector(buffer: Buffer): number[] {
     const values: number[] = [];
@@ -26,6 +32,14 @@ function decodeVector(buffer: Buffer): number[] {
         values.push(buffer.readFloatLE(offset));
     }
     return values;
+}
+
+function encodeVector(values: readonly number[]): Buffer {
+    const buffer = Buffer.alloc(values.length * Float32Array.BYTES_PER_ELEMENT);
+    for (let index = 0; index < values.length; index += 1) {
+        buffer.writeFloatLE(values[index], index * Float32Array.BYTES_PER_ELEMENT);
+    }
+    return buffer;
 }
 
 test('embedding config defaults to an unconfigured API and a 30-day half-life', () => {
@@ -105,7 +119,9 @@ test('profiles cross groups, opt-out is reversible, and group summaries describe
             user_id INTEGER PRIMARY KEY NOT NULL,
             opted_out INTEGER NOT NULL,
             revision INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
+            updated_at INTEGER NOT NULL,
+            notice_sent_at INTEGER,
+            last_spoke_at INTEGER
         );
     `);
     const database = drizzle(sqlite, { schema });
@@ -249,4 +265,194 @@ test('profiles cross groups, opt-out is reversible, and group summaries describe
     assert.equal(summary.minimum, 4);
     assert.equal(summary.maximum, 8);
     assert.ok(Math.abs(summary.l2Norm - Math.sqrt(80)) < 1e-9);
+});
+
+test('author guesses rank current group members in the active embedding space', t => {
+    const sqlite = new Database(':memory:');
+    t.after(() => sqlite.close());
+    sqlite.exec(`
+        CREATE TABLE group_message_embedding_means (
+            group_id INTEGER PRIMARY KEY NOT NULL,
+            space_key TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            mean_vector BLOB NOT NULL,
+            sample_count INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE user_message_embedding_profiles (
+            user_id INTEGER PRIMARY KEY NOT NULL,
+            space_key TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            feature_vector BLOB NOT NULL,
+            effective_weight REAL NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+    `);
+    const database = drizzle(sqlite, { schema });
+    const spaceKey = 'https://embedding.example/v1\u0000test-model';
+    database
+        .insert(groupMessageEmbeddingMeans)
+        .values({
+            groupId: 100,
+            spaceKey,
+            dimensions: 2,
+            meanVector: encodeVector([0, 0]),
+            sampleCount: 9,
+            updatedAt: 1_000
+        })
+        .run();
+    database
+        .insert(userMessageEmbeddingProfiles)
+        .values([
+            {
+                userId: 7,
+                spaceKey,
+                dimensions: 2,
+                featureVector: encodeVector([1, 0]),
+                effectiveWeight: 4,
+                updatedAt: 1_000
+            },
+            {
+                userId: 8,
+                spaceKey,
+                dimensions: 2,
+                featureVector: encodeVector([0.8, 0.2]),
+                effectiveWeight: 3,
+                updatedAt: 1_000
+            },
+            {
+                userId: 9,
+                spaceKey,
+                dimensions: 2,
+                featureVector: encodeVector([0, 0]),
+                effectiveWeight: 2,
+                updatedAt: 1_000
+            },
+            {
+                userId: 10,
+                spaceKey: 'https://embedding.example/v1\u0000other-model',
+                dimensions: 2,
+                featureVector: encodeVector([1, 0]),
+                effectiveWeight: 8,
+                updatedAt: 1_000
+            }
+        ])
+        .run();
+
+    const guess = guessMessageEmbeddingAuthor(database, 100, [8, 7, 9, 10], [1, 0], spaceKey);
+    assert.ok(guess);
+    assert.equal(guess.userId, 7);
+    assert.equal(guess.similarity, 1);
+    assert.equal(guess.effectiveWeight, 4);
+
+    assert.equal(guessMessageEmbeddingAuthor(database, 100, [8], [1, 0], spaceKey)?.userId, 8);
+    assert.equal(guessMessageEmbeddingAuthor(database, 100, [9, 10], [1, 0], spaceKey), null);
+    assert.equal(guessMessageEmbeddingAuthor(database, 100, [7], [0, 0], spaceKey), null);
+    assert.equal(
+        guessMessageEmbeddingAuthor(database, 100, [7], [1, 0], 'https://embedding.example/v1\u0000other-model'),
+        null
+    );
+});
+
+test('embedding cutoff timestamps accept Shanghai time, explicit ISO time, and Unix timestamps', () => {
+    assert.equal(parseEmbeddingCutoffTimestamp('2026-08-30 08:00:00'), Date.UTC(2026, 7, 30, 0, 0, 0));
+    assert.equal(parseEmbeddingCutoffTimestamp('2026-08-30T00:00:00Z'), Date.UTC(2026, 7, 30, 0, 0, 0));
+    assert.equal(parseEmbeddingCutoffTimestamp('1788048000'), 1_788_048_000_000);
+    assert.equal(parseEmbeddingCutoffTimestamp('1788048000000'), 1_788_048_000_000);
+    assert.equal(parseEmbeddingCutoffTimestamp('2026-02-30'), null);
+    assert.equal(parseEmbeddingCutoffTimestamp('12345678901'), null);
+});
+
+test('one-time notices and inactive opt-outs use receipt-time speech activity', t => {
+    const sqlite = new Database(':memory:');
+    t.after(() => sqlite.close());
+    sqlite.exec(`
+        CREATE TABLE user_message_embedding_profiles (
+            user_id INTEGER PRIMARY KEY NOT NULL,
+            space_key TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            feature_vector BLOB NOT NULL,
+            effective_weight REAL NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE message_embedding_preferences (
+            user_id INTEGER PRIMARY KEY NOT NULL,
+            opted_out INTEGER NOT NULL,
+            revision INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            notice_sent_at INTEGER,
+            last_spoke_at INTEGER
+        );
+    `);
+    const database = drizzle(sqlite, { schema });
+    const spaceKey = 'https://embedding.example/v1\u0000test-model';
+
+    touchMessageEmbeddingLastSpokeAt(database, 7, 1_000);
+    touchMessageEmbeddingLastSpokeAt(database, 8, 3_000);
+    touchMessageEmbeddingLastSpokeAt(database, 9, 1_000);
+    touchMessageEmbeddingLastSpokeAt(database, 10, 1_000);
+    touchMessageEmbeddingLastSpokeAt(database, 11, 2_000);
+    optOutMessageEmbedding(database, 10, 1_500);
+    touchMessageEmbeddingLastSpokeAt(database, 10, 4_000);
+    database
+        .insert(userMessageEmbeddingProfiles)
+        .values([
+            {
+                userId: 7,
+                spaceKey,
+                dimensions: 2,
+                featureVector: encodeVector([1, 0]),
+                effectiveWeight: 2,
+                updatedAt: 1_000
+            },
+            {
+                userId: 8,
+                spaceKey,
+                dimensions: 2,
+                featureVector: encodeVector([0, 1]),
+                effectiveWeight: 2,
+                updatedAt: 500
+            }
+        ])
+        .run();
+
+    assert.equal(optOutInactiveMessageEmbeddingUsers(database, 2_000, 5_000), 2);
+    assert.deepEqual(
+        database.select({ userId: userMessageEmbeddingProfiles.userId }).from(userMessageEmbeddingProfiles).all(),
+        [{ userId: 8 }]
+    );
+
+    const preference = (userId: number) =>
+        database.select().from(messageEmbeddingPreferences).where(eq(messageEmbeddingPreferences.userId, userId)).get();
+    assert.deepEqual(
+        [7, 8, 9, 10, 11].map(userId => {
+            const row = preference(userId);
+            assert.ok(row);
+            return {
+                userId,
+                optedOut: row.optedOut,
+                revision: row.revision,
+                noticeSentAt: row.noticeSentAt,
+                lastSpokeAt: row.lastSpokeAt
+            };
+        }),
+        [
+            { userId: 7, optedOut: true, revision: 1, noticeSentAt: null, lastSpokeAt: null },
+            { userId: 8, optedOut: false, revision: 0, noticeSentAt: null, lastSpokeAt: 3_000 },
+            { userId: 9, optedOut: true, revision: 1, noticeSentAt: null, lastSpokeAt: null },
+            { userId: 10, optedOut: true, revision: 1, noticeSentAt: 1_500, lastSpokeAt: null },
+            { userId: 11, optedOut: false, revision: 0, noticeSentAt: null, lastSpokeAt: 2_000 }
+        ]
+    );
+
+    assert.deepEqual(claimMessageEmbeddingNotice(database, 7, 6_000), { optedOut: true, claimedAt: 6_000 });
+    assert.equal(releaseMessageEmbeddingNoticeClaim(database, 7, 6_000), true);
+    assert.deepEqual(claimMessageEmbeddingNotice(database, 7, 7_000), { optedOut: true, claimedAt: 7_000 });
+    assert.equal(claimMessageEmbeddingNotice(database, 7, 8_000), null);
+    assert.deepEqual(claimMessageEmbeddingNotice(database, 8, 6_000), { optedOut: false, claimedAt: 6_000 });
+    assert.equal(claimMessageEmbeddingNotice(database, 8, 7_000), null);
+    assert.equal(claimMessageEmbeddingNotice(database, 10, 6_000), null);
+
+    touchMessageEmbeddingLastSpokeAt(database, 7, 9_000);
+    assert.equal(preference(7)?.lastSpokeAt, null);
 });
