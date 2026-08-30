@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1788069654000,
+      "tag": "0007_message_embedding_profiles",
+      "breakpoints": true
+    }
+  ]
+}
