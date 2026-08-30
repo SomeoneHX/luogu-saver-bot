@@ -7,7 +7,10 @@ import * as schema from '@/db/schema';
 import {
     calculateDecayedAverage,
     calculateStreamingMean,
+    getGroupMessageEmbeddingSummary,
+    getMessageEmbeddingPreference,
     isMessageEmbeddingOptedOut,
+    optInMessageEmbedding,
     optOutMessageEmbedding,
     recordMessageEmbedding
 } from '@/helpers/message-embedding';
@@ -48,7 +51,7 @@ test('streaming group mean and time-decayed user average follow the configured f
     assert.ok(Math.abs(averageUpdate.vector[1] - 2.8) < 1e-6);
 });
 
-test('profiles cross groups, group means stay independent, and opt-out deletes and blocks user data', t => {
+test('profiles cross groups, opt-out is reversible, and group summaries describe the current mean', t => {
     const sqlite = new Database(':memory:');
     t.after(() => sqlite.close());
     sqlite.exec(`
@@ -68,9 +71,11 @@ test('profiles cross groups, group means stay independent, and opt-out deletes a
             effective_weight REAL NOT NULL,
             updated_at INTEGER NOT NULL
         );
-        CREATE TABLE message_embedding_opt_outs (
+        CREATE TABLE message_embedding_preferences (
             user_id INTEGER PRIMARY KEY NOT NULL,
-            opted_out_at INTEGER NOT NULL
+            opted_out INTEGER NOT NULL,
+            revision INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
         );
     `);
     const database = drizzle(sqlite, { schema });
@@ -80,8 +85,9 @@ test('profiles cross groups, group means stay independent, and opt-out deletes a
         recordMessageEmbedding(database, {
             groupId: 100,
             userId: 7,
+            preferenceRevision: 0,
             embedding: [2, 4],
-            spaceKey: 'test-space',
+            spaceKey: 'https://embedding.example/v1\u0000test-model',
             timestamp: 1_000,
             decayHalfLifeMs: halfLifeMs
         }),
@@ -91,8 +97,9 @@ test('profiles cross groups, group means stay independent, and opt-out deletes a
         recordMessageEmbedding(database, {
             groupId: 100,
             userId: 7,
+            preferenceRevision: 0,
             embedding: [4, 8],
-            spaceKey: 'test-space',
+            spaceKey: 'https://embedding.example/v1\u0000test-model',
             timestamp: 2_000,
             decayHalfLifeMs: halfLifeMs
         }),
@@ -102,8 +109,9 @@ test('profiles cross groups, group means stay independent, and opt-out deletes a
         recordMessageEmbedding(database, {
             groupId: 200,
             userId: 7,
+            preferenceRevision: 0,
             embedding: [10, 10],
-            spaceKey: 'test-space',
+            spaceKey: 'https://embedding.example/v1\u0000test-model',
             timestamp: 2_000,
             decayHalfLifeMs: halfLifeMs
         }),
@@ -126,25 +134,77 @@ test('profiles cross groups, group means stay independent, and opt-out deletes a
     const optOut = optOutMessageEmbedding(database, 7, 3_000);
     assert.equal(optOut.alreadyOptedOut, false);
     assert.equal(optOut.deletedProfile, true);
+    assert.equal(optOut.revision, 1);
     assert.equal(isMessageEmbeddingOptedOut(database, 7), true);
+    assert.deepEqual(getMessageEmbeddingPreference(database, 7), {
+        optedOut: true,
+        revision: 1,
+        updatedAt: 3_000
+    });
     assert.equal(database.select().from(userMessageEmbeddingProfiles).all().length, 0);
     assert.equal(
         recordMessageEmbedding(database, {
             groupId: 100,
             userId: 7,
+            preferenceRevision: 1,
             embedding: [100, 100],
-            spaceKey: 'test-space',
-            timestamp: 4_000,
+            spaceKey: 'https://embedding.example/v1\u0000test-model',
+            timestamp: 3_500,
+            decayHalfLifeMs: halfLifeMs
+        }),
+        false
+    );
+
+    const optIn = optInMessageEmbedding(database, 7, 4_000);
+    assert.equal(optIn.alreadyOptedIn, false);
+    assert.equal(optIn.revision, 2);
+    assert.deepEqual(getMessageEmbeddingPreference(database, 7), {
+        optedOut: false,
+        revision: 2,
+        updatedAt: 4_000
+    });
+    assert.equal(
+        recordMessageEmbedding(database, {
+            groupId: 100,
+            userId: 7,
+            preferenceRevision: 0,
+            embedding: [100, 100],
+            spaceKey: 'https://embedding.example/v1\u0000test-model',
+            timestamp: 4_500,
             decayHalfLifeMs: halfLifeMs
         }),
         false
     );
     assert.equal(
-        database
-            .select()
-            .from(groupMessageEmbeddingMeans)
-            .all()
-            .find(row => row.groupId === 100)?.sampleCount,
-        2
+        recordMessageEmbedding(database, {
+            groupId: 100,
+            userId: 7,
+            preferenceRevision: 2,
+            embedding: [6, 12],
+            spaceKey: 'https://embedding.example/v1\u0000test-model',
+            timestamp: 5_000,
+            decayHalfLifeMs: halfLifeMs
+        }),
+        true
     );
+
+    const resumedProfile = database
+        .select()
+        .from(userMessageEmbeddingProfiles)
+        .where(eq(userMessageEmbeddingProfiles.userId, 7))
+        .get();
+    assert.ok(resumedProfile);
+    assert.deepEqual(decodeVector(resumedProfile.featureVector), [2, 4]);
+
+    const summary = getGroupMessageEmbeddingSummary(database, 100);
+    assert.ok(summary);
+    assert.equal(summary.model, 'test-model');
+    assert.equal(summary.sampleCount, 3);
+    assert.equal(summary.dimensions, 2);
+    assert.equal(summary.updatedAt, 5_000);
+    assert.deepEqual(summary.preview, [4, 8]);
+    assert.equal(summary.componentMean, 6);
+    assert.equal(summary.minimum, 4);
+    assert.equal(summary.maximum, 8);
+    assert.ok(Math.abs(summary.l2Norm - Math.sqrt(80)) < 1e-9);
 });

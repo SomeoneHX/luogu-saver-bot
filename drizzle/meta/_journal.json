@@ -8,6 +8,13 @@
       "when": 1788069654000,
       "tag": "0007_message_embedding_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788074152000,
+      "tag": "0008_embedding_preferences",
+      "breakpoints": true
     }
   ]
 }

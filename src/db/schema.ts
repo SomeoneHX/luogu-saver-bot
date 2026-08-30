@@ -246,7 +246,9 @@ export const userMessageEmbeddingProfiles = sqliteTable('user_message_embedding_
     updatedAt: integer('updated_at').notNull()
 });
 
-export const messageEmbeddingOptOuts = sqliteTable('message_embedding_opt_outs', {
+export const messageEmbeddingPreferences = sqliteTable('message_embedding_preferences', {
     userId: integer('user_id').primaryKey(),
-    optedOutAt: integer('opted_out_at').notNull()
+    optedOut: integer('opted_out', { mode: 'boolean' }).notNull(),
+    revision: integer('revision').notNull(),
+    updatedAt: integer('updated_at').notNull()
 });

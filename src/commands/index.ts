@@ -26,6 +26,7 @@ import { DonateCommand } from '@/commands/donate';
 import { BlacklistCommand } from '@/commands/blacklist';
 import { RngdleCommand } from '@/commands/rngdle';
 import { EmbeddingCommand } from '@/commands/embedding';
+import { EmbeddingSummaryCommand } from '@/commands/embedding-summary';
 
 export function resolveCommandUsage(command: Command<never>): string;
 export function resolveCommandUsage(command: Command<never>, ...subCommands: string[]): string;
@@ -81,5 +82,6 @@ export const commands: Command<never>[] = [
     new BlacklistCommand(),
     new RngdleCommand(),
     new EmbeddingCommand(),
+    new EmbeddingSummaryCommand(),
     new DonateCommand()
 ];

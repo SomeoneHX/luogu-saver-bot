@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from '@/db/schema';
-import { groupMessageEmbeddingMeans, messageEmbeddingOptOuts, userMessageEmbeddingProfiles } from '@/db/schema';
+import { groupMessageEmbeddingMeans, messageEmbeddingPreferences, userMessageEmbeddingProfiles } from '@/db/schema';
 
 export type MessageEmbeddingDatabase = BetterSQLite3Database<typeof schema>;
 
@@ -20,10 +20,30 @@ export type DecayedAverageUpdate = {
 export type MessageEmbeddingRecord = {
     groupId: number;
     userId: number;
+    preferenceRevision: number;
     embedding: readonly number[];
     spaceKey: string;
     timestamp: number;
     decayHalfLifeMs: number;
+};
+
+export type MessageEmbeddingPreference = {
+    optedOut: boolean;
+    revision: number;
+    updatedAt: number | null;
+};
+
+export type GroupMessageEmbeddingSummary = {
+    groupId: number;
+    model: string;
+    dimensions: number;
+    sampleCount: number;
+    updatedAt: number;
+    componentMean: number;
+    minimum: number;
+    maximum: number;
+    l2Norm: number;
+    preview: number[];
 };
 
 function assertFiniteVector(vector: ArrayLike<number>, label: string): void {
@@ -125,49 +145,86 @@ function decodeVector(buffer: Buffer, dimensions: number): Float32Array {
     return vector;
 }
 
+export function getMessageEmbeddingPreference(
+    database: MessageEmbeddingDatabase,
+    userId: number
+): MessageEmbeddingPreference {
+    const row = database
+        .select()
+        .from(messageEmbeddingPreferences)
+        .where(eq(messageEmbeddingPreferences.userId, userId))
+        .get();
+    return row
+        ? { optedOut: row.optedOut, revision: row.revision, updatedAt: row.updatedAt }
+        : { optedOut: false, revision: 0, updatedAt: null };
+}
+
 export function isMessageEmbeddingOptedOut(database: MessageEmbeddingDatabase, userId: number): boolean {
-    return Boolean(
-        database
-            .select({ userId: messageEmbeddingOptOuts.userId })
-            .from(messageEmbeddingOptOuts)
-            .where(eq(messageEmbeddingOptOuts.userId, userId))
-            .get()
-    );
+    return getMessageEmbeddingPreference(database, userId).optedOut;
 }
 
 export function optOutMessageEmbedding(
     database: MessageEmbeddingDatabase,
     userId: number,
-    optedOutAt: number
-): { alreadyOptedOut: boolean; deletedProfile: boolean } {
+    updatedAt: number
+): { alreadyOptedOut: boolean; deletedProfile: boolean; revision: number } {
     return database.transaction(transaction => {
         const existing = transaction
-            .select({ userId: messageEmbeddingOptOuts.userId })
-            .from(messageEmbeddingOptOuts)
-            .where(eq(messageEmbeddingOptOuts.userId, userId))
+            .select()
+            .from(messageEmbeddingPreferences)
+            .where(eq(messageEmbeddingPreferences.userId, userId))
             .get();
+        const revision = (existing?.revision ?? 0) + 1;
         const deletedProfile =
             transaction
                 .delete(userMessageEmbeddingProfiles)
                 .where(eq(userMessageEmbeddingProfiles.userId, userId))
                 .run().changes > 0;
         transaction
-            .insert(messageEmbeddingOptOuts)
-            .values({ userId, optedOutAt })
-            .onConflictDoNothing({ target: messageEmbeddingOptOuts.userId })
+            .insert(messageEmbeddingPreferences)
+            .values({ userId, optedOut: true, revision, updatedAt })
+            .onConflictDoUpdate({
+                target: messageEmbeddingPreferences.userId,
+                set: { optedOut: true, revision, updatedAt }
+            })
             .run();
-        return { alreadyOptedOut: Boolean(existing), deletedProfile };
+        return { alreadyOptedOut: existing?.optedOut === true, deletedProfile, revision };
+    });
+}
+
+export function optInMessageEmbedding(
+    database: MessageEmbeddingDatabase,
+    userId: number,
+    updatedAt: number
+): { alreadyOptedIn: boolean; revision: number } {
+    return database.transaction(transaction => {
+        const existing = transaction
+            .select()
+            .from(messageEmbeddingPreferences)
+            .where(eq(messageEmbeddingPreferences.userId, userId))
+            .get();
+        if (!existing || !existing.optedOut) {
+            return { alreadyOptedIn: true, revision: existing?.revision ?? 0 };
+        }
+
+        const revision = existing.revision + 1;
+        transaction
+            .update(messageEmbeddingPreferences)
+            .set({ optedOut: false, revision, updatedAt })
+            .where(eq(messageEmbeddingPreferences.userId, userId))
+            .run();
+        return { alreadyOptedIn: false, revision };
     });
 }
 
 export function recordMessageEmbedding(database: MessageEmbeddingDatabase, record: MessageEmbeddingRecord): boolean {
     return database.transaction(transaction => {
-        const optOut = transaction
-            .select({ userId: messageEmbeddingOptOuts.userId })
-            .from(messageEmbeddingOptOuts)
-            .where(eq(messageEmbeddingOptOuts.userId, record.userId))
+        const preference = transaction
+            .select({ optedOut: messageEmbeddingPreferences.optedOut, revision: messageEmbeddingPreferences.revision })
+            .from(messageEmbeddingPreferences)
+            .where(eq(messageEmbeddingPreferences.userId, record.userId))
             .get();
-        if (optOut) return false;
+        if (preference?.optedOut || (preference?.revision ?? 0) !== record.preferenceRevision) return false;
 
         const dimensions = record.embedding.length;
         const groupRecord = transaction
@@ -253,4 +310,45 @@ export function recordMessageEmbedding(database: MessageEmbeddingDatabase, recor
             .run();
         return true;
     });
+}
+
+export function getGroupMessageEmbeddingSummary(
+    database: MessageEmbeddingDatabase,
+    groupId: number
+): GroupMessageEmbeddingSummary | null {
+    const record = database
+        .select()
+        .from(groupMessageEmbeddingMeans)
+        .where(eq(groupMessageEmbeddingMeans.groupId, groupId))
+        .get();
+    if (!record) return null;
+
+    const vector = decodeVector(record.meanVector, record.dimensions);
+    let sum = 0;
+    let sumSquares = 0;
+    let minimum = Number.POSITIVE_INFINITY;
+    let maximum = Number.NEGATIVE_INFINITY;
+    const preview: number[] = [];
+    for (let index = 0; index < vector.length; index += 1) {
+        const value = vector[index];
+        sum += value;
+        sumSquares += value * value;
+        minimum = Math.min(minimum, value);
+        maximum = Math.max(maximum, value);
+        if (index < 8) preview.push(value);
+    }
+
+    const separatorIndex = record.spaceKey.lastIndexOf('\u0000');
+    return {
+        groupId,
+        model: separatorIndex >= 0 ? record.spaceKey.slice(separatorIndex + 1) : record.spaceKey,
+        dimensions: record.dimensions,
+        sampleCount: record.sampleCount,
+        updatedAt: record.updatedAt,
+        componentMean: sum / vector.length,
+        minimum,
+        maximum,
+        l2Norm: Math.sqrt(sumSquares),
+        preview
+    };
 }

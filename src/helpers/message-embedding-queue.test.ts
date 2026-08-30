@@ -52,9 +52,11 @@ test('out-of-order embedding responses commit in arrival order for both group an
             effective_weight REAL NOT NULL,
             updated_at INTEGER NOT NULL
         );
-        CREATE TABLE message_embedding_opt_outs (
+        CREATE TABLE message_embedding_preferences (
             user_id INTEGER PRIMARY KEY NOT NULL,
-            opted_out_at INTEGER NOT NULL
+            opted_out INTEGER NOT NULL,
+            revision INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
         );
     `);
     const database = drizzle(sqlite, { schema });
@@ -78,6 +80,7 @@ test('out-of-order embedding responses commit in arrival order for both group an
             recordMessageEmbedding(database, {
                 groupId: 100,
                 userId: 1,
+                preferenceRevision: 0,
                 embedding,
                 spaceKey: 'test-space',
                 timestamp: 1_000,
@@ -97,6 +100,7 @@ test('out-of-order embedding responses commit in arrival order for both group an
             recordMessageEmbedding(database, {
                 groupId: 100,
                 userId: 2,
+                preferenceRevision: 0,
                 embedding,
                 spaceKey: 'test-space',
                 timestamp: 2_000,
@@ -116,6 +120,7 @@ test('out-of-order embedding responses commit in arrival order for both group an
             recordMessageEmbedding(database, {
                 groupId: 200,
                 userId: 2,
+                preferenceRevision: 0,
                 embedding,
                 spaceKey: 'test-space',
                 timestamp: 3_000,

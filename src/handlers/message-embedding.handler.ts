@@ -3,7 +3,7 @@ import { NapLink } from '@naplink/naplink';
 import { config } from '@/config';
 import { db } from '@/db';
 import { MessageEmbeddingCommitQueue } from '@/helpers/message-embedding-queue';
-import { isMessageEmbeddingOptedOut, recordMessageEmbedding } from '@/helpers/message-embedding';
+import { getMessageEmbeddingPreference, recordMessageEmbedding } from '@/helpers/message-embedding';
 import { registerMessageHandler } from '@/handlers/registry';
 import { createEmbedding } from '@/utils/embedding-client';
 import { logger } from '@/utils/logger';
@@ -17,7 +17,8 @@ async function handleMessageEmbedding(_client: NapLink, data: OneBotV11.GroupMes
 
     const input = data.raw_message.trim();
     const settings = { ...config.embedding };
-    if (!input || !settings.endpoint || isMessageEmbeddingOptedOut(db, data.user_id)) return;
+    const preference = getMessageEmbeddingPreference(db, data.user_id);
+    if (!input || !settings.endpoint || preference.optedOut) return;
 
     const groupId = data.group_id;
     const userId = data.user_id;
@@ -33,6 +34,7 @@ async function handleMessageEmbedding(_client: NapLink, data: OneBotV11.GroupMes
                 recordMessageEmbedding(db, {
                     groupId,
                     userId,
+                    preferenceRevision: preference.revision,
                     embedding,
                     spaceKey,
                     timestamp,
