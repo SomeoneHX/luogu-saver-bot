@@ -22,6 +22,7 @@ import { Moderation } from '@/utils/moderation';
 import { startWebhookServer } from '@/server/webhook';
 import { logger } from '@/utils/logger';
 import { setupGroupAddRequestHandler } from '@/handlers/group-add-request.handler';
+import { setupMessageEmbeddingHandler } from '@/handlers/message-embedding.handler';
 import { startConfigReloadWatcher } from '@/config';
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
@@ -41,6 +42,7 @@ function initializeApp() {
     setupImageModerationHandler();
     setupMessageHandler();
     setupAntiSpamHandler();
+    setupMessageEmbeddingHandler();
     setupGroupAddRequestHandler();
     setupRegisteredMessageHandlers(client);
     setupRegisteredEventHandlers(client);

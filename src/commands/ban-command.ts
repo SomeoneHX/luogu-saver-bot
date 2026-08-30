@@ -1,5 +1,6 @@
 import { Command, CommandScope } from '@/types';
 import { OneBotV11 } from '@onebots/protocol-onebot-v11/lib';
+import { NapLink } from '@naplink/naplink';
 import { reply } from '@/utils/client';
 import { isAdminByData, isSuperUser } from '@/utils/permission';
 import { db } from '@/db';
@@ -9,6 +10,7 @@ import { isValidUser } from '@/utils/validator';
 import { commands } from '@/commands';
 import { normalizeConditionalUserTargets } from '@/utils/command-args';
 import { getErrorMessage } from '@/utils/error';
+import { isCommandBanAllowed } from '@/utils/command-ban';
 
 export class BanCommandCommand implements Command<OneBotV11.GroupMessageEvent> {
     name = 'ban-command';
@@ -40,7 +42,7 @@ export class BanCommandCommand implements Command<OneBotV11.GroupMessageEvent> {
         return false;
     }
 
-    async execute(args: string[], client: any, data: OneBotV11.GroupMessageEvent): Promise<void> {
+    async execute(args: string[], client: NapLink, data: OneBotV11.GroupMessageEvent): Promise<void> {
         const action = args[0];
 
         if (!isSuperUser(data.user_id) && !(await isAdminByData(client, data))) {
@@ -57,7 +59,7 @@ export class BanCommandCommand implements Command<OneBotV11.GroupMessageEvent> {
         }
     }
 
-    private async handleBan(args: string[], client: any, data: OneBotV11.GroupMessageEvent): Promise<void> {
+    private async handleBan(args: string[], client: NapLink, data: OneBotV11.GroupMessageEvent): Promise<void> {
         const userId = Number(args[1]);
 
         const commandName = args[2];
@@ -65,6 +67,10 @@ export class BanCommandCommand implements Command<OneBotV11.GroupMessageEvent> {
         const command = commands.find(cmd => cmd.name === commandName || cmd.aliases?.includes(commandName));
         if (!command) {
             await reply(client, data, `指令 "${commandName}" 不存在。`);
+            return;
+        }
+        if (!isCommandBanAllowed(command)) {
+            await reply(client, data, `指令 "${command.name}" 标记为始终可用，不能创建禁令。`);
             return;
         }
 
@@ -89,7 +95,7 @@ export class BanCommandCommand implements Command<OneBotV11.GroupMessageEvent> {
                     userId,
                     commandName: canonicalName,
                     scopeType,
-                    scopeId: scopeId as any,
+                    scopeId,
                     bannedBy: data.user_id,
                     bannedAt: Date.now(),
                     reason
@@ -114,7 +120,7 @@ export class BanCommandCommand implements Command<OneBotV11.GroupMessageEvent> {
         }
     }
 
-    private async handleUnban(args: string[], client: any, data: OneBotV11.GroupMessageEvent): Promise<void> {
+    private async handleUnban(args: string[], client: NapLink, data: OneBotV11.GroupMessageEvent): Promise<void> {
         const userId = Number(args[1]);
 
         const commandName = args[2];
@@ -132,21 +138,17 @@ export class BanCommandCommand implements Command<OneBotV11.GroupMessageEvent> {
             const command = commands.find(cmd => cmd.name === commandName || cmd.aliases?.includes(commandName));
             const canonicalName = command?.name || commandName;
 
-            const whereConditions = [
-                eq(commandBans.userId, userId),
-                eq(commandBans.commandName, canonicalName),
-                eq(commandBans.scopeType, scopeType)
-            ];
-
-            if (scopeId === null) {
-                whereConditions.push(isNull(commandBans.scopeId) as any);
-            } else {
-                whereConditions.push(eq(commandBans.scopeId, scopeId));
-            }
-
+            const scopeCondition = scopeId === null ? isNull(commandBans.scopeId) : eq(commandBans.scopeId, scopeId);
             const result = db
                 .delete(commandBans)
-                .where(and(...whereConditions))
+                .where(
+                    and(
+                        eq(commandBans.userId, userId),
+                        eq(commandBans.commandName, canonicalName),
+                        eq(commandBans.scopeType, scopeType),
+                        scopeCondition
+                    )
+                )
                 .run();
 
             if (result.changes > 0) {
@@ -160,7 +162,7 @@ export class BanCommandCommand implements Command<OneBotV11.GroupMessageEvent> {
         }
     }
 
-    private async handleList(args: string[], client: any, data: OneBotV11.GroupMessageEvent): Promise<void> {
+    private async handleList(args: string[], client: NapLink, data: OneBotV11.GroupMessageEvent): Promise<void> {
         try {
             let bans;
 

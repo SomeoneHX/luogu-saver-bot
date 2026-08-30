@@ -5,14 +5,15 @@ import { config } from '@/config';
 import { OneBotV11 } from '@onebots/protocol-onebot-v11/lib';
 import { isAdminByData, isSuperUser } from '@/utils/permission';
 import { db } from '@/db';
-import { and, eq, isNull, or } from 'drizzle-orm';
-import { commandAliases, commandBans } from '@/db/schema';
+import { and, eq, isNull } from 'drizzle-orm';
+import { commandAliases } from '@/db/schema';
 import { reply } from '@/utils/client';
 import { AliasScope, AllMessageEvent } from '@/types';
 import { isModuleEnabled } from '@/utils/module-toggle';
 import { MessageBuilder } from '@/utils/message-builder';
 import { MessageSegment } from '@/types/message';
 import { registerMessageHandler } from '@/handlers/registry';
+import { checkCommandBan } from '@/utils/command-ban';
 
 const cooldowns = new Map<string, number>();
 
@@ -66,34 +67,6 @@ async function resolveCommand(commandName: string, args: string[], aliasScope: A
         .trim();
 
     return { command, args: interpolated ? interpolated.split(/\s+/) : [] };
-}
-
-async function checkCommandBan(
-    data: AllMessageEvent,
-    commandName: string
-): Promise<{ banned: boolean; reason?: string }> {
-    if (isSuperUser(data.user_id)) {
-        return { banned: false };
-    }
-
-    const groupId = isPrivateMessage(data) ? null : data.group_id;
-
-    const ban = await db.query.commandBans.findFirst({
-        where: and(
-            eq(commandBans.userId, data.user_id),
-            eq(commandBans.commandName, commandName),
-            or(
-                eq(commandBans.scopeType, 'global'),
-                groupId !== null ? and(eq(commandBans.scopeType, 'group'), eq(commandBans.scopeId, groupId)) : undefined
-            )
-        )
-    });
-
-    if (ban) {
-        return { banned: true, reason: ban.reason ?? undefined };
-    }
-
-    return { banned: false };
 }
 
 async function checkCooldown(client: NapLink, data: AllMessageEvent, commandName: string, commandCooldown: number) {
@@ -216,7 +189,12 @@ async function handleMessage(client: NapLink, data: AllMessageEvent) {
         return;
     }
 
-    if (!isPrivateMessage(data) && !(await isModuleEnabled(data.group_id, command.name))) {
+    if (
+        !isPrivateMessage(data) &&
+        command.alwaysAvailable !== true &&
+        command.groupToggleable !== false &&
+        !(await isModuleEnabled(data.group_id, command.name))
+    ) {
         logger.info(`Command ${command.name} is disabled in group ${data.group_id}.`);
         return;
     }
@@ -229,7 +207,14 @@ async function handleMessage(client: NapLink, data: AllMessageEvent) {
         return;
     }
 
-    const banCheck = await checkCommandBan(data, command.name);
+    const banCheck = await checkCommandBan(
+        {
+            userId: data.user_id,
+            groupId: isPrivateMessage(data) ? null : data.group_id,
+            superUser: isSuperUser(data.user_id)
+        },
+        command
+    );
     if (banCheck.banned) {
         logger.warn(`User ${data.user_id} is banned from using command ${command.name}`);
         await reply(

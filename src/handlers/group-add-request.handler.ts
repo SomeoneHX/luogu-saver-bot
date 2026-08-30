@@ -10,6 +10,16 @@ import { logger } from '@/utils/logger';
 import { resolveQqLevel } from '@/utils/qq-profile';
 import { isGroupEnabled } from '@/utils/group-policy';
 import { evaluateGroupReview } from '@/utils/group-review';
+type GroupAddRequestEvent = Pick<OneBotV11.GroupRequestEvent, 'sub_type' | 'comment' | 'group_id' | 'user_id' | 'flag'>;
+
+function isGroupAddRequestEvent(event: unknown): event is GroupAddRequestEvent {
+    if (typeof event !== 'object' || event === null) return false;
+    if (!('sub_type' in event) || (event.sub_type !== 'add' && event.sub_type !== 'invite')) return false;
+    if (!('group_id' in event) || typeof event.group_id !== 'number') return false;
+    if (!('user_id' in event) || typeof event.user_id !== 'number') return false;
+    if (!('flag' in event) || typeof event.flag !== 'string') return false;
+    return !('comment' in event) || event.comment === undefined || typeof event.comment === 'string';
+}
 
 function isAutoReviewActive(groupId: number): boolean {
     return config.group.autoReviewEnabled && isGroupEnabled(groupId, config.group.enabledGroupIds);
@@ -19,9 +29,10 @@ export function setupGroupAddRequestHandler() {
     registerEventHandler({
         name: 'group-add-request-handler',
         order: 100,
+        moduleName: 'group-auto-review',
         events: ['request.group'],
-        handler: async (client: NapLink, event: OneBotV11.GroupRequestEvent) => {
-            if (event.sub_type !== 'add') return;
+        handler: async (client: NapLink, event: unknown) => {
+            if (!isGroupAddRequestEvent(event) || event.sub_type !== 'add') return;
             const message = event.comment ?? '';
             const groupId = event.group_id;
             if (!isAutoReviewActive(groupId)) return;

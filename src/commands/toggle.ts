@@ -1,17 +1,38 @@
 import { Command, CommandScope } from '@/types';
 import { OneBotV11 } from '@onebots/protocol-onebot-v11/lib';
+import { NapLink } from '@naplink/naplink';
 import { reply } from '@/utils/client';
 import { isAdminByData, isSuperUser } from '@/utils/permission';
-import { isModuleEnabled, setModuleEnabled, listDisabledModules } from '@/utils/module-toggle';
+import { GROUP_FEATURE_MODULES, isModuleEnabled, setModuleEnabled } from '@/utils/module-toggle';
 import { commands } from '@/commands';
 
-const SPECIAL_MODULES = ['anti-spam', 'image-moderation'];
+const GROUP_FEATURE_MODULE_BY_NAME: Record<(typeof GROUP_FEATURE_MODULES)[number], true> = {
+    'anti-spam': true,
+    'image-moderation': true,
+    'group-auto-review': true,
+    'github-webhook': true,
+    'message-embedding': true
+};
+
+function getToggleableModuleNames(): string[] {
+    const commandNames = commands
+        .filter(
+            command =>
+                command.scope !== 'private' && command.groupToggleable !== false && command.alwaysAvailable !== true
+        )
+        .map(command => command.name);
+    return [...new Set([...commandNames, ...GROUP_FEATURE_MODULES])].sort();
+}
 
 function resolveModuleName(name: string): string | null {
-    if (SPECIAL_MODULES.includes(name)) {
-        return name;
-    }
-    const command = commands.find(cmd => cmd.name === name || cmd.aliases?.includes(name));
+    if (Object.hasOwn(GROUP_FEATURE_MODULE_BY_NAME, name)) return name;
+    const command = commands.find(
+        command =>
+            command.scope !== 'private' &&
+            command.groupToggleable !== false &&
+            command.alwaysAvailable !== true &&
+            (command.name === name || command.aliases?.includes(name))
+    );
     return command?.name ?? null;
 }
 
@@ -25,6 +46,7 @@ export class ToggleCommand implements Command<OneBotV11.GroupMessageEvent> {
         disable: '/toggle disable <模块名>'
     };
     scope: CommandScope = 'group';
+    groupToggleable = false;
 
     validateArgs(args: string[]): boolean {
         if (args.length === 0) return false;
@@ -34,7 +56,7 @@ export class ToggleCommand implements Command<OneBotV11.GroupMessageEvent> {
         return false;
     }
 
-    async execute(args: string[], client: any, data: OneBotV11.GroupMessageEvent): Promise<void> {
+    async execute(args: string[], client: NapLink, data: OneBotV11.GroupMessageEvent): Promise<void> {
         if (!isSuperUser(data.user_id) && !(await isAdminByData(client, data))) {
             await reply(client, data, '权限不足，需要管理员或超级管理员权限。');
             return;
@@ -51,24 +73,30 @@ export class ToggleCommand implements Command<OneBotV11.GroupMessageEvent> {
         }
     }
 
-    private async handleList(client: any, data: OneBotV11.GroupMessageEvent): Promise<void> {
-        const disabled = await listDisabledModules(data.group_id);
-        if (disabled.length === 0) {
-            await reply(client, data, '本群所有模块均已开启。');
-            return;
-        }
-        await reply(client, data, `本群已关闭的模块：\n${disabled.map((m, i) => `${i + 1}. ${m}`).join('\n')}`);
+    private async handleList(client: NapLink, data: OneBotV11.GroupMessageEvent): Promise<void> {
+        const moduleNames = getToggleableModuleNames();
+        const states = await Promise.all(
+            moduleNames.map(async moduleName => ({
+                moduleName,
+                enabled: await isModuleEnabled(data.group_id, moduleName)
+            }))
+        );
+        await reply(
+            client,
+            data,
+            `本群功能状态：\n${states.map(({ moduleName, enabled }) => `${enabled ? '开启' : '关闭'} ${moduleName}`).join('\n')}`
+        );
     }
 
     private async handleToggle(
         name: string,
         enabled: boolean,
-        client: any,
+        client: NapLink,
         data: OneBotV11.GroupMessageEvent
     ): Promise<void> {
         const moduleName = resolveModuleName(name);
         if (!moduleName) {
-            await reply(client, data, `未找到模块 "${name}"。可用的特殊模块：${SPECIAL_MODULES.join(', ')}。`);
+            await reply(client, data, `未找到可按群切换的功能 "${name}"。使用 /toggle list 查看全部功能。`);
             return;
         }
 

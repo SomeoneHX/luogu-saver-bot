@@ -1,0 +1,150 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { eq } from 'drizzle-orm';
+import * as schema from '@/db/schema';
+import {
+    calculateDecayedAverage,
+    calculateStreamingMean,
+    isMessageEmbeddingOptedOut,
+    optOutMessageEmbedding,
+    recordMessageEmbedding
+} from '@/helpers/message-embedding';
+import { groupMessageEmbeddingMeans, userMessageEmbeddingProfiles } from '@/db/schema';
+import { EmbeddingSchema } from '@/config/schemas/embedding';
+import { parseEmbeddingResponse } from '@/utils/embedding-client';
+
+function decodeVector(buffer: Buffer): number[] {
+    const values: number[] = [];
+    for (let offset = 0; offset < buffer.byteLength; offset += Float32Array.BYTES_PER_ELEMENT) {
+        values.push(buffer.readFloatLE(offset));
+    }
+    return values;
+}
+
+test('embedding config defaults to an unconfigured API and a 30-day half-life', () => {
+    const embedding = EmbeddingSchema.parse({});
+    assert.equal(embedding.endpoint, '');
+    assert.equal(embedding.model, 'text-embedding-3-small');
+    assert.equal(embedding.decayHalfLifeMs, 30 * 24 * 60 * 60 * 1000);
+});
+
+test('embedding response parser validates the external vector payload', () => {
+    assert.deepEqual(parseEmbeddingResponse({ data: [{ index: 0, embedding: [1, 2, 3] }] }), [1, 2, 3]);
+    assert.throws(() => parseEmbeddingResponse({ data: [{ embedding: [] }] }));
+    assert.throws(() => parseEmbeddingResponse({ data: [{ embedding: [Number.NaN] }] }));
+});
+
+test('streaming group mean and time-decayed user average follow the configured formulas', () => {
+    const meanUpdate = calculateStreamingMean([1, 3], 1, [3, 7]);
+    assert.deepEqual(Array.from(meanUpdate.mean), [2, 5]);
+    assert.deepEqual(Array.from(meanUpdate.residual), [1, 2]);
+    assert.equal(meanUpdate.sampleCount, 2);
+
+    const averageUpdate = calculateDecayedAverage([2, 4], 3, 1_000, [5, 1], 2_000, 1_000);
+    assert.ok(Math.abs(averageUpdate.effectiveWeight - 2.5) < 1e-9);
+    assert.ok(Math.abs(averageUpdate.vector[0] - 3.2) < 1e-6);
+    assert.ok(Math.abs(averageUpdate.vector[1] - 2.8) < 1e-6);
+});
+
+test('profiles cross groups, group means stay independent, and opt-out deletes and blocks user data', t => {
+    const sqlite = new Database(':memory:');
+    t.after(() => sqlite.close());
+    sqlite.exec(`
+        CREATE TABLE group_message_embedding_means (
+            group_id INTEGER PRIMARY KEY NOT NULL,
+            space_key TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            mean_vector BLOB NOT NULL,
+            sample_count INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE user_message_embedding_profiles (
+            user_id INTEGER PRIMARY KEY NOT NULL,
+            space_key TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            feature_vector BLOB NOT NULL,
+            effective_weight REAL NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE message_embedding_opt_outs (
+            user_id INTEGER PRIMARY KEY NOT NULL,
+            opted_out_at INTEGER NOT NULL
+        );
+    `);
+    const database = drizzle(sqlite, { schema });
+    const halfLifeMs = 1_000;
+
+    assert.equal(
+        recordMessageEmbedding(database, {
+            groupId: 100,
+            userId: 7,
+            embedding: [2, 4],
+            spaceKey: 'test-space',
+            timestamp: 1_000,
+            decayHalfLifeMs: halfLifeMs
+        }),
+        true
+    );
+    assert.equal(
+        recordMessageEmbedding(database, {
+            groupId: 100,
+            userId: 7,
+            embedding: [4, 8],
+            spaceKey: 'test-space',
+            timestamp: 2_000,
+            decayHalfLifeMs: halfLifeMs
+        }),
+        true
+    );
+    assert.equal(
+        recordMessageEmbedding(database, {
+            groupId: 200,
+            userId: 7,
+            embedding: [10, 10],
+            spaceKey: 'test-space',
+            timestamp: 2_000,
+            decayHalfLifeMs: halfLifeMs
+        }),
+        true
+    );
+
+    const group100 = database
+        .select()
+        .from(groupMessageEmbeddingMeans)
+        .where(eq(groupMessageEmbeddingMeans.groupId, 100))
+        .get();
+    const groupRows = database.select().from(groupMessageEmbeddingMeans).all();
+    const profileRows = database.select().from(userMessageEmbeddingProfiles).all();
+    assert.equal(groupRows.length, 2);
+    assert.equal(profileRows.length, 1);
+    assert.ok(group100);
+    assert.equal(group100.sampleCount, 2);
+    assert.deepEqual(decodeVector(group100.meanVector), [3, 6]);
+
+    const optOut = optOutMessageEmbedding(database, 7, 3_000);
+    assert.equal(optOut.alreadyOptedOut, false);
+    assert.equal(optOut.deletedProfile, true);
+    assert.equal(isMessageEmbeddingOptedOut(database, 7), true);
+    assert.equal(database.select().from(userMessageEmbeddingProfiles).all().length, 0);
+    assert.equal(
+        recordMessageEmbedding(database, {
+            groupId: 100,
+            userId: 7,
+            embedding: [100, 100],
+            spaceKey: 'test-space',
+            timestamp: 4_000,
+            decayHalfLifeMs: halfLifeMs
+        }),
+        false
+    );
+    assert.equal(
+        database
+            .select()
+            .from(groupMessageEmbeddingMeans)
+            .all()
+            .find(row => row.groupId === 100)?.sampleCount,
+        2
+    );
+});

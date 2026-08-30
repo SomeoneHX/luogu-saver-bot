@@ -7,6 +7,7 @@ import { logger } from '@/utils/logger';
 import { NapLink } from '@naplink/naplink';
 import { config } from '@/config';
 import { isGroupEnabled } from '@/utils/group-policy';
+import { isModuleEnabled } from '@/utils/module-toggle';
 
 let isJobRunning = false;
 
@@ -30,11 +31,17 @@ export function scheduleGachaJobs(client: NapLink): void {
             logger.info(`Found ${expiredPools.length} expired gacha pool(s)`);
             for (const pool of expiredPools) {
                 if (!isGroupEnabled(pool.groupId, config.group.enabledGroupIds)) continue;
+                if (!(await isModuleEnabled(pool.groupId, 'gacha'))) continue;
                 try {
                     logger.info(`Settling pool #${pool.id}...`);
                     const results = await totalizeGachaPool(pool.id);
-                    if (!isGroupEnabled(pool.groupId, config.group.enabledGroupIds)) {
-                        logger.info(`Pool #${pool.id} settlement deferred because group ${pool.groupId} is disabled.`);
+                    if (
+                        !isGroupEnabled(pool.groupId, config.group.enabledGroupIds) ||
+                        !(await isModuleEnabled(pool.groupId, 'gacha'))
+                    ) {
+                        logger.info(
+                            `Pool #${pool.id} settlement deferred because gacha is disabled in group ${pool.groupId}.`
+                        );
                         continue;
                     }
                     await db.update(gachaPools).set({ totalized: true }).where(eq(gachaPools.id, pool.id));

@@ -1,4 +1,5 @@
 import { NapLink } from '@naplink/naplink';
+import { isModuleEnabled } from '@/utils/module-toggle';
 import { config } from '@/config';
 import { sendGroupMessage, sendPrivateMessage } from '@/utils/client';
 import { logger } from '@/utils/logger';
@@ -183,7 +184,10 @@ async function sendNotification(client: NapLink, message: string): Promise<void>
     }
 
     const tasks = [
-        ...groupIds.map(groupId => sendGroupMessage(client, groupId, message, true)),
+        ...groupIds.map(async groupId => {
+            if (!(await isModuleEnabled(groupId, 'github-webhook'))) return;
+            await sendGroupMessage(client, groupId, message, true);
+        }),
         ...userIds.map(userId => sendPrivateMessage(client, userId, message, true))
     ];
     const results = await Promise.allSettled(tasks);

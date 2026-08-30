@@ -9,6 +9,7 @@ import { QaSchema } from '@/config/schemas/qa';
 import { WebhookSchema } from '@/config/schemas/webhook';
 import { GroupSchema } from '@/config/schemas/group';
 import { RngdleSchema } from '@/config/schemas/rngdle';
+import { EmbeddingSchema } from '@/config/schemas/embedding';
 
 export const AppConfigSchema = z.object({
     napcat: NapcatSchema,
@@ -20,7 +21,8 @@ export const AppConfigSchema = z.object({
     qa: QaSchema,
     webhook: WebhookSchema,
     group: GroupSchema,
-    rngdle: RngdleSchema
+    rngdle: RngdleSchema,
+    embedding: EmbeddingSchema
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;

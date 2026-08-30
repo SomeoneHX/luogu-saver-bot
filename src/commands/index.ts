@@ -25,10 +25,11 @@ import { EchoParseCommand } from '@/commands/echo-parse';
 import { DonateCommand } from '@/commands/donate';
 import { BlacklistCommand } from '@/commands/blacklist';
 import { RngdleCommand } from '@/commands/rngdle';
+import { EmbeddingCommand } from '@/commands/embedding';
 
-export function resolveCommandUsage(command: Command<any>): string;
-export function resolveCommandUsage(command: Command<any>, ...subCommands: string[]): string;
-export function resolveCommandUsage(command: Command<any>, ...subCommands: string[]): string {
+export function resolveCommandUsage(command: Command<never>): string;
+export function resolveCommandUsage(command: Command<never>, ...subCommands: string[]): string;
+export function resolveCommandUsage(command: Command<never>, ...subCommands: string[]): string {
     if (typeof command.usage === 'string') {
         return command.usage;
     }
@@ -53,7 +54,7 @@ export function resolveCommandUsage(command: Command<any>, ...subCommands: strin
         .join('\n');
 }
 
-export const commands: Command<any>[] = [
+export const commands: Command<never>[] = [
     new EchoCommand(),
     new EchoRawCommand(),
     new EchoParseCommand(),
@@ -79,5 +80,6 @@ export const commands: Command<any>[] = [
     new ToggleCommand(),
     new BlacklistCommand(),
     new RngdleCommand(),
+    new EmbeddingCommand(),
     new DonateCommand()
 ];

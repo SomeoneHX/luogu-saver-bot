@@ -5,9 +5,8 @@ import { ImageSegment, MessageSegment } from '@/types/message';
 import { logger } from '@/utils/logger';
 import { Moderation } from '@/utils/moderation';
 import { registerMessageHandler } from '@/handlers/registry';
-import { isModuleEnabled } from '@/utils/module-toggle';
-import { isAdminByData, isSuperUser } from "@/utils/permission";
-import { reply } from "@/utils/client";
+import { isAdminByData, isSuperUser } from '@/utils/permission';
+import { reply } from '@/utils/client';
 
 function getImageSegments(message: MessageSegment[]): ImageSegment[] {
     return message.filter((segment): segment is ImageSegment => segment.type === 'image');
@@ -29,8 +28,7 @@ async function resolveImageUrl(client: NapLink, image: ImageSegment): Promise<st
 
 async function handleImages(client: NapLink, data: OneBotV11.GroupMessageEvent) {
     if (!config.aliyun.imageModerationEnabled) return;
-    if (!(await isModuleEnabled(data.group_id, 'image-moderation'))) return;
-    if (isSuperUser(data.user_id) || await isAdminByData(client, data)) return;
+    if (isSuperUser(data.user_id) || (await isAdminByData(client, data))) return;
 
     const images = getImageSegments(data.message as MessageSegment[]);
     if (images.length === 0) return;
@@ -50,7 +48,11 @@ async function handleImages(client: NapLink, data: OneBotV11.GroupMessageEvent) 
         );
         try {
             await client.deleteMessage(data.message_id);
-            await reply(client, data, `撤回疑似违规图片，风险等级: ${result.riskLevel}，标签: ${result.labels.length ? result.labels.join(', ') : ''}。`);
+            await reply(
+                client,
+                data,
+                `撤回疑似违规图片，风险等级: ${result.riskLevel}，标签: ${result.labels.length ? result.labels.join(', ') : ''}。`
+            );
         } catch {}
         return;
     }
@@ -60,6 +62,7 @@ export function setupImageModerationHandler() {
     registerMessageHandler({
         name: 'image-moderation',
         order: 0,
+        moduleName: 'image-moderation',
         group: handleImages
     });
 }

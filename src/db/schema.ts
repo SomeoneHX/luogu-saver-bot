@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, uniqueIndex, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, uniqueIndex, index, blob, real } from 'drizzle-orm/sqlite-core';
 
 export const users = sqliteTable('binds', {
     id: integer('id').primaryKey(),
@@ -226,4 +226,27 @@ export const qaKnowledgeItems = sqliteTable('qa_knowledge_items', {
     createdBy: integer('created_by').notNull(),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull()
+});
+
+export const groupMessageEmbeddingMeans = sqliteTable('group_message_embedding_means', {
+    groupId: integer('group_id').primaryKey(),
+    spaceKey: text('space_key').notNull(),
+    dimensions: integer('dimensions').notNull(),
+    meanVector: blob('mean_vector', { mode: 'buffer' }).notNull(),
+    sampleCount: integer('sample_count').notNull(),
+    updatedAt: integer('updated_at').notNull()
+});
+
+export const userMessageEmbeddingProfiles = sqliteTable('user_message_embedding_profiles', {
+    userId: integer('user_id').primaryKey(),
+    spaceKey: text('space_key').notNull(),
+    dimensions: integer('dimensions').notNull(),
+    featureVector: blob('feature_vector', { mode: 'buffer' }).notNull(),
+    effectiveWeight: real('effective_weight').notNull(),
+    updatedAt: integer('updated_at').notNull()
+});
+
+export const messageEmbeddingOptOuts = sqliteTable('message_embedding_opt_outs', {
+    userId: integer('user_id').primaryKey(),
+    optedOutAt: integer('opted_out_at').notNull()
 });

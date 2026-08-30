@@ -7,6 +7,7 @@ import { NapLink } from '@naplink/naplink';
 import { sendGroupMessage } from '@/utils/client';
 import { config } from '@/config';
 import { isGroupEnabled } from '@/utils/group-policy';
+import { isModuleEnabled } from '@/utils/module-toggle';
 
 let isJobRunning = false;
 
@@ -36,6 +37,7 @@ export function scheduleGachaHintJobs(client: NapLink): void {
 
             for (const [groupId, pools] of groupMap.entries()) {
                 if (!isGroupEnabled(groupId, config.group.enabledGroupIds)) continue;
+                if (!(await isModuleEnabled(groupId, 'gacha'))) continue;
                 const hintMessage =
                     '本群正在进行的抽奖：\n' +
                     pools

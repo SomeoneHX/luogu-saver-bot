@@ -16,6 +16,8 @@ export interface Command<T> {
     normalizeArgs?: (args: string[]) => string[] | null;
     validateArgs?: (args: string[]) => boolean;
     cooldown?: number;
+    groupToggleable?: boolean;
+    alwaysAvailable?: boolean;
     execute: (args: string[], client: NapLink, data: T, replyMessageId?: number) => Promise<void>;
 }
 
