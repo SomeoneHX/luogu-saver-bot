@@ -16,4 +16,3 @@ config.yml
 sqlite.db
 .claude/*
 logs/*
-drizzle/*
