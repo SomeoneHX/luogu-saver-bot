@@ -20,7 +20,19 @@ export type EmbeddingRequestSettings = {
 };
 
 export function parseEmbeddingResponse(data: unknown): number[] {
-    const parsed = EmbeddingResponseSchema.parse(data);
+    let payload = data;
+    for (let depth = 0; depth < 2 && typeof payload === 'string'; depth += 1) {
+        try {
+            payload = JSON.parse(payload);
+        } catch {
+            throw new Error('Embedding API returned a non-JSON string response.');
+        }
+    }
+    if (typeof payload === 'string') {
+        throw new Error('Embedding API returned a repeatedly encoded string response.');
+    }
+
+    const parsed = EmbeddingResponseSchema.parse(payload);
     const item = parsed.data.find(candidate => candidate.index === 0) ?? parsed.data[0];
     if (item.embedding.length === 0 || item.embedding.some(value => !Number.isFinite(value))) {
         throw new Error('Embedding API returned an empty or non-finite vector.');
@@ -30,6 +42,7 @@ export function parseEmbeddingResponse(data: unknown): number[] {
 
 export async function createEmbedding(input: string, settings: EmbeddingRequestSettings): Promise<number[]> {
     const headers: Record<string, string> = {
+        Accept: 'application/json',
         'Content-Type': 'application/json'
     };
     if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
@@ -43,7 +56,8 @@ export async function createEmbedding(input: string, settings: EmbeddingRequestS
         },
         {
             headers,
-            timeout: settings.requestTimeoutMs
+            timeout: settings.requestTimeoutMs,
+            responseType: 'json'
         }
     );
     return parseEmbeddingResponse(response.data);

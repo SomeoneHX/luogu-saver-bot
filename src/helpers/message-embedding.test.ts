@@ -33,8 +33,12 @@ test('embedding config defaults to an unconfigured API and a 30-day half-life', 
     assert.equal(embedding.decayHalfLifeMs, 30 * 24 * 60 * 60 * 1000);
 });
 
-test('embedding response parser validates the external vector payload', () => {
-    assert.deepEqual(parseEmbeddingResponse({ data: [{ index: 0, embedding: [1, 2, 3] }] }), [1, 2, 3]);
+test('embedding response parser accepts OpenRouter JSON objects and string-encoded JSON', () => {
+    const response = { data: [{ index: 0, embedding: [1, 2, 3] }] };
+    assert.deepEqual(parseEmbeddingResponse(response), [1, 2, 3]);
+    assert.deepEqual(parseEmbeddingResponse(JSON.stringify(response)), [1, 2, 3]);
+    assert.deepEqual(parseEmbeddingResponse(JSON.stringify(JSON.stringify(response))), [1, 2, 3]);
+    assert.throws(() => parseEmbeddingResponse('upstream unavailable'), /non-JSON string response/);
     assert.throws(() => parseEmbeddingResponse({ data: [{ embedding: [] }] }));
     assert.throws(() => parseEmbeddingResponse({ data: [{ embedding: [Number.NaN] }] }));
 });

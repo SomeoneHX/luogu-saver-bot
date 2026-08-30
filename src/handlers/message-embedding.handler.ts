@@ -17,8 +17,9 @@ async function handleMessageEmbedding(_client: NapLink, data: OneBotV11.GroupMes
 
     const input = data.raw_message.trim();
     const settings = { ...config.embedding };
+    if (!input || !settings.endpoint) return;
     const preference = getMessageEmbeddingPreference(db, data.user_id);
-    if (!input || !settings.endpoint || preference.optedOut) return;
+    if (preference.optedOut) return;
 
     const groupId = data.group_id;
     const userId = data.user_id;
