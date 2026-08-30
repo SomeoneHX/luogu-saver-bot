@@ -46,6 +46,19 @@ export type GroupMessageEmbeddingSummary = {
     preview: number[];
 };
 
+export type UserMessageEmbeddingSummary = {
+    userId: number;
+    model: string;
+    dimensions: number;
+    effectiveWeight: number;
+    updatedAt: number;
+    componentMean: number;
+    minimum: number;
+    maximum: number;
+    l2Norm: number;
+    preview: number[];
+};
+
 function assertFiniteVector(vector: ArrayLike<number>, label: string): void {
     if (!Number.isSafeInteger(vector.length) || vector.length <= 0) {
         throw new Error(`${label} must contain at least one dimension.`);
@@ -312,18 +325,13 @@ export function recordMessageEmbedding(database: MessageEmbeddingDatabase, recor
     });
 }
 
-export function getGroupMessageEmbeddingSummary(
-    database: MessageEmbeddingDatabase,
-    groupId: number
-): GroupMessageEmbeddingSummary | null {
-    const record = database
-        .select()
-        .from(groupMessageEmbeddingMeans)
-        .where(eq(groupMessageEmbeddingMeans.groupId, groupId))
-        .get();
-    if (!record) return null;
+type VectorStatistics = Pick<
+    GroupMessageEmbeddingSummary,
+    'componentMean' | 'minimum' | 'maximum' | 'l2Norm' | 'preview'
+>;
 
-    const vector = decodeVector(record.meanVector, record.dimensions);
+function summarizeVector(buffer: Buffer, dimensions: number): VectorStatistics {
+    const vector = decodeVector(buffer, dimensions);
     let sum = 0;
     let sumSquares = 0;
     let minimum = Number.POSITIVE_INFINITY;
@@ -337,18 +345,58 @@ export function getGroupMessageEmbeddingSummary(
         maximum = Math.max(maximum, value);
         if (index < 8) preview.push(value);
     }
-
-    const separatorIndex = record.spaceKey.lastIndexOf('\u0000');
     return {
-        groupId,
-        model: separatorIndex >= 0 ? record.spaceKey.slice(separatorIndex + 1) : record.spaceKey,
-        dimensions: record.dimensions,
-        sampleCount: record.sampleCount,
-        updatedAt: record.updatedAt,
         componentMean: sum / vector.length,
         minimum,
         maximum,
         l2Norm: Math.sqrt(sumSquares),
         preview
+    };
+}
+
+function resolveEmbeddingModel(spaceKey: string): string {
+    const separatorIndex = spaceKey.lastIndexOf('\u0000');
+    return separatorIndex >= 0 ? spaceKey.slice(separatorIndex + 1) : spaceKey;
+}
+
+export function getGroupMessageEmbeddingSummary(
+    database: MessageEmbeddingDatabase,
+    groupId: number
+): GroupMessageEmbeddingSummary | null {
+    const record = database
+        .select()
+        .from(groupMessageEmbeddingMeans)
+        .where(eq(groupMessageEmbeddingMeans.groupId, groupId))
+        .get();
+    if (!record) return null;
+
+    return {
+        groupId,
+        model: resolveEmbeddingModel(record.spaceKey),
+        dimensions: record.dimensions,
+        sampleCount: record.sampleCount,
+        updatedAt: record.updatedAt,
+        ...summarizeVector(record.meanVector, record.dimensions)
+    };
+}
+
+export function getUserMessageEmbeddingSummary(
+    database: MessageEmbeddingDatabase,
+    userId: number
+): UserMessageEmbeddingSummary | null {
+    const record = database
+        .select()
+        .from(userMessageEmbeddingProfiles)
+        .where(eq(userMessageEmbeddingProfiles.userId, userId))
+        .get();
+    if (!record) return null;
+
+    return {
+        userId,
+        model: resolveEmbeddingModel(record.spaceKey),
+        dimensions: record.dimensions,
+        effectiveWeight: record.effectiveWeight,
+        updatedAt: record.updatedAt,
+        ...summarizeVector(record.featureVector, record.dimensions)
     };
 }

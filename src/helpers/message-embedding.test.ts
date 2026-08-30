@@ -8,6 +8,7 @@ import {
     calculateDecayedAverage,
     calculateStreamingMean,
     getGroupMessageEmbeddingSummary,
+    getUserMessageEmbeddingSummary,
     getMessageEmbeddingPreference,
     isMessageEmbeddingOptedOut,
     optInMessageEmbedding,
@@ -17,6 +18,7 @@ import {
 import { groupMessageEmbeddingMeans, userMessageEmbeddingProfiles } from '@/db/schema';
 import { EmbeddingSchema } from '@/config/schemas/embedding';
 import { parseEmbeddingResponse } from '@/utils/embedding-client';
+import { canViewMessageEmbeddingProfile } from '@/utils/embedding-profile-access';
 
 function decodeVector(buffer: Buffer): number[] {
     const values: number[] = [];
@@ -33,12 +35,20 @@ test('embedding config defaults to an unconfigured API and a 30-day half-life', 
     assert.equal(embedding.decayHalfLifeMs, 30 * 24 * 60 * 60 * 1000);
 });
 
-test('embedding response parser accepts OpenRouter JSON objects and string-encoded JSON', () => {
+test('embedding response parser accepts OpenRouter JSON and event-stream text without exposing bodies', () => {
     const response = { data: [{ index: 0, embedding: [1, 2, 3] }] };
     assert.deepEqual(parseEmbeddingResponse(response), [1, 2, 3]);
     assert.deepEqual(parseEmbeddingResponse(JSON.stringify(response)), [1, 2, 3]);
     assert.deepEqual(parseEmbeddingResponse(JSON.stringify(JSON.stringify(response))), [1, 2, 3]);
-    assert.throws(() => parseEmbeddingResponse('upstream unavailable'), /non-JSON string response/);
+    assert.deepEqual(parseEmbeddingResponse(`\uFEFF${JSON.stringify(response)}`), [1, 2, 3]);
+    assert.deepEqual(parseEmbeddingResponse(`data: ${JSON.stringify(response)}\n\ndata: [DONE]\n\n`), [1, 2, 3]);
+    assert.throws(
+        () => parseEmbeddingResponse('<html>private upstream body</html>', { status: 200, contentType: 'text/html' }),
+        error =>
+            error instanceof Error &&
+            /kind=html, length=34, status=200, contentType=text\/html/.test(error.message) &&
+            !error.message.includes('private upstream body')
+    );
     assert.throws(() => parseEmbeddingResponse({ data: [{ embedding: [] }] }));
     assert.throws(() => parseEmbeddingResponse({ data: [{ embedding: [Number.NaN] }] }));
 });
@@ -53,6 +63,13 @@ test('streaming group mean and time-decayed user average follow the configured f
     assert.ok(Math.abs(averageUpdate.effectiveWeight - 2.5) < 1e-9);
     assert.ok(Math.abs(averageUpdate.vector[0] - 3.2) < 1e-6);
     assert.ok(Math.abs(averageUpdate.vector[1] - 2.8) < 1e-6);
+});
+
+test('profile access allows self-service and administrator lookups only', () => {
+    assert.equal(canViewMessageEmbeddingProfile(7, 7, false, false), true);
+    assert.equal(canViewMessageEmbeddingProfile(7, 8, false, false), false);
+    assert.equal(canViewMessageEmbeddingProfile(7, 8, true, false), true);
+    assert.equal(canViewMessageEmbeddingProfile(7, 8, false, true), true);
 });
 
 test('profiles cross groups, opt-out is reversible, and group summaries describe the current mean', t => {
@@ -199,6 +216,18 @@ test('profiles cross groups, opt-out is reversible, and group summaries describe
         .get();
     assert.ok(resumedProfile);
     assert.deepEqual(decodeVector(resumedProfile.featureVector), [2, 4]);
+
+    const userSummary = getUserMessageEmbeddingSummary(database, 7);
+    assert.ok(userSummary);
+    assert.equal(userSummary.model, 'test-model');
+    assert.equal(userSummary.dimensions, 2);
+    assert.equal(userSummary.effectiveWeight, 1);
+    assert.equal(userSummary.updatedAt, 5_000);
+    assert.deepEqual(userSummary.preview, [2, 4]);
+    assert.equal(userSummary.componentMean, 3);
+    assert.equal(userSummary.minimum, 2);
+    assert.equal(userSummary.maximum, 4);
+    assert.ok(Math.abs(userSummary.l2Norm - Math.sqrt(20)) < 1e-9);
 
     const summary = getGroupMessageEmbeddingSummary(database, 100);
     assert.ok(summary);
