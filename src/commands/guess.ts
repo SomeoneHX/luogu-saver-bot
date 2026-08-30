@@ -68,7 +68,13 @@ export class GuessCommand implements Command<OneBotV11.GroupMessageEvent> {
             [
                 `我猜这句话最像 ${displayName}（${guess.userId}）说的。`,
                 `最高余弦相似度: ${guess.similarity.toPrecision(6)}`,
-                `该画像有效权重: ${guess.effectiveWeight.toPrecision(6)}`
+                `领先差值: ${guess.similarityMargin === null ? '无第二候选' : guess.similarityMargin.toPrecision(6)}`,
+                `相对置信度: ${
+                    guess.relativeConfidence === null
+                        ? '无法估计（有效候选不足 2 人）'
+                        : `${(guess.relativeConfidence * 100).toFixed(2)}%（${guess.candidateCount} 名有效候选，仅表示分数区分度）`
+                }`,
+                `该画像有效权重（上次更新时）: ${guess.effectiveWeight.toPrecision(6)}`
             ].join('\n'),
             true
         );

@@ -335,6 +335,14 @@ test('author guesses rank current group members in the active embedding space', 
                 featureVector: encodeVector([1, 0]),
                 effectiveWeight: 8,
                 updatedAt: 1_000
+            },
+            {
+                userId: 11,
+                spaceKey,
+                dimensions: 2,
+                featureVector: encodeVector([1, 0]),
+                effectiveWeight: 1,
+                updatedAt: 1_000
             }
         ])
         .run();
@@ -344,8 +352,28 @@ test('author guesses rank current group members in the active embedding space', 
     assert.equal(guess.userId, 7);
     assert.equal(guess.similarity, 1);
     assert.equal(guess.effectiveWeight, 4);
+    const runnerUpSimilarity = 0.8 / Math.sqrt(0.8 ** 2 + 0.2 ** 2);
+    const expectedConfidence = 1 / (1 + Math.exp((runnerUpSimilarity - 1) / 0.1));
+    assert.ok(Math.abs((guess.runnerUpSimilarity ?? 0) - runnerUpSimilarity) < 1e-6);
+    assert.ok(Math.abs((guess.similarityMargin ?? 0) - (1 - runnerUpSimilarity)) < 1e-6);
+    assert.equal(guess.candidateCount, 2);
+    assert.ok(Math.abs((guess.relativeConfidence ?? 0) - expectedConfidence) < 1e-6);
 
-    assert.equal(guessMessageEmbeddingAuthor(database, 100, [8], [1, 0], spaceKey)?.userId, 8);
+    const tiedGuess = guessMessageEmbeddingAuthor(database, 100, [11, 7], [1, 0], spaceKey);
+    assert.ok(tiedGuess);
+    assert.equal(tiedGuess.userId, 7);
+    assert.equal(tiedGuess.runnerUpSimilarity, 1);
+    assert.equal(tiedGuess.similarityMargin, 0);
+    assert.equal(tiedGuess.candidateCount, 2);
+    assert.equal(tiedGuess.relativeConfidence, 0.5);
+
+    const singleCandidateGuess = guessMessageEmbeddingAuthor(database, 100, [8], [1, 0], spaceKey);
+    assert.ok(singleCandidateGuess);
+    assert.equal(singleCandidateGuess.candidateCount, 1);
+    assert.equal(singleCandidateGuess.runnerUpSimilarity, null);
+    assert.equal(singleCandidateGuess.similarityMargin, null);
+    assert.equal(singleCandidateGuess.relativeConfidence, null);
+
     assert.equal(guessMessageEmbeddingAuthor(database, 100, [9, 10], [1, 0], spaceKey), null);
     assert.equal(guessMessageEmbeddingAuthor(database, 100, [7], [0, 0], spaceKey), null);
     assert.equal(

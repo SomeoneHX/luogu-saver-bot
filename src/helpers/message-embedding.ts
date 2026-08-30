@@ -3,6 +3,9 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from '@/db/schema';
 import { groupMessageEmbeddingMeans, messageEmbeddingPreferences, userMessageEmbeddingProfiles } from '@/db/schema';
 
+// Converts cosine gaps into a relative candidate distribution, not a calibrated success probability.
+const MESSAGE_AUTHOR_GUESS_TEMPERATURE = 0.1;
+
 export type MessageEmbeddingDatabase = BetterSQLite3Database<typeof schema>;
 
 export type StreamingMeanUpdate = {
@@ -63,6 +66,10 @@ export type MessageAuthorGuess = {
     userId: number;
     similarity: number;
     effectiveWeight: number;
+    runnerUpSimilarity: number | null;
+    similarityMargin: number | null;
+    candidateCount: number;
+    relativeConfidence: number | null;
 };
 
 export type MessageEmbeddingNoticeClaim = {
@@ -594,7 +601,11 @@ export function guessMessageEmbeddingAuthor(
     }
     if (residualMagnitudeSquared === 0) return null;
 
-    let bestGuess: MessageAuthorGuess | null = null;
+    let bestGuess: Pick<MessageAuthorGuess, 'userId' | 'similarity' | 'effectiveWeight'> | null = null;
+    let runnerUpSimilarity: number | null = null;
+    let candidateCount = 0;
+    let maximumSimilarity = Number.NEGATIVE_INFINITY;
+    let relativeExponentialSum = 0;
     const residualMagnitude = Math.sqrt(residualMagnitudeSquared);
     for (let offset = 0; offset < candidateUserIds.length; offset += 500) {
         const candidateChunk = candidateUserIds.slice(offset, offset + 500);
@@ -620,18 +631,47 @@ export function guessMessageEmbeddingAuthor(
             if (featureMagnitudeSquared === 0) continue;
 
             const similarity = dotProduct / (residualMagnitude * Math.sqrt(featureMagnitudeSquared));
+            if (!Number.isFinite(similarity)) continue;
+
+            candidateCount += 1;
+            if (similarity > maximumSimilarity) {
+                relativeExponentialSum =
+                    relativeExponentialSum *
+                        Math.exp((maximumSimilarity - similarity) / MESSAGE_AUTHOR_GUESS_TEMPERATURE) +
+                    1;
+                maximumSimilarity = similarity;
+            } else {
+                relativeExponentialSum += Math.exp((similarity - maximumSimilarity) / MESSAGE_AUTHOR_GUESS_TEMPERATURE);
+            }
+
             if (
                 !bestGuess ||
                 similarity > bestGuess.similarity ||
                 (similarity === bestGuess.similarity && profile.userId < bestGuess.userId)
             ) {
+                if (bestGuess) {
+                    runnerUpSimilarity =
+                        runnerUpSimilarity === null
+                            ? bestGuess.similarity
+                            : Math.max(runnerUpSimilarity, bestGuess.similarity);
+                }
                 bestGuess = {
                     userId: profile.userId,
                     similarity,
                     effectiveWeight: profile.effectiveWeight
                 };
+            } else {
+                runnerUpSimilarity =
+                    runnerUpSimilarity === null ? similarity : Math.max(runnerUpSimilarity, similarity);
             }
         }
     }
-    return bestGuess;
+    if (!bestGuess) return null;
+    return {
+        ...bestGuess,
+        runnerUpSimilarity,
+        similarityMargin: runnerUpSimilarity === null ? null : bestGuess.similarity - runnerUpSimilarity,
+        candidateCount,
+        relativeConfidence: candidateCount < 2 ? null : 1 / relativeExponentialSum
+    };
 }
